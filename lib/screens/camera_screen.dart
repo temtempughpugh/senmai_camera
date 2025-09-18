@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart';
 import '../blocs/camera_bloc.dart';
 import '../blocs/analysis_bloc.dart';
 import 'result_screen.dart';
 import 'history_screen.dart';
 import 'settings_screen.dart';
+import 'image_crop_screen.dart';
 
 class CameraScreen extends StatefulWidget {
   @override
@@ -77,8 +79,8 @@ void dispose() {
         listener: (context, state) {
           print('BlocListener: カメラ状態変更 - ${state.runtimeType}');
           if (state is CameraPhotoTakenState) {
-            print('撮影完了 - 結果画面に遷移: ${state.imagePath}');
-            _navigateToResult(state.imagePath);
+            print('撮影完了 - 範囲調整画面に遷移: ${state.imagePath}');
+            _navigateToCropScreen(state.imagePath);
             
             // 撮影完了後、すぐにカメラを再初期化
             Future.delayed(Duration(milliseconds: 500), () {
@@ -106,40 +108,51 @@ void dispose() {
                     } else if (state is CameraReadyState) {
                       return Stack(
                         children: [
-                          // カメラプレビュー
+                          // カメラプレビュー（タップフォーカス対応）
                           Positioned.fill(
-                            child: AspectRatio(
-                              aspectRatio: state.controller.value.aspectRatio,
-                              child: state.controller.buildPreview(),
+                            child: GestureDetector(
+                              onTapUp: (details) {
+                                _onCameraViewTap(details, state.controller);
+                              },
+                              child: AspectRatio(
+                                aspectRatio: state.controller.value.aspectRatio,
+                                child: state.controller.buildPreview(),
+                              ),
                             ),
                           ),
-                          // 撮影ガイド
-                          Center(
-                            child: Container(
-                              width: 300,
-                              height: 300,
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: Colors.white,
-                                  width: 2,
-                                ),
-                                borderRadius: BorderRadius.circular(150),
-                              ),
+                          // 大きな撮影ガイド（強制的に画面からはみ出す正円）
+                          Positioned.fill(
+                            child: OverflowBox(
+                              maxWidth: double.infinity,
+                              maxHeight: double.infinity,
                               child: Center(
-                                child: Text(
-                                  '米粒をここに\n収めてください',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    shadows: [
-                                      Shadow(
-                                        blurRadius: 10.0,
-                                        color: Colors.black,
-                                        offset: Offset(2.0, 2.0),
+                                child: Container(
+                                  width: 500, // 500x500に設定
+                                  height: 500, // 同じ値で正円
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: Colors.red,
+                                      width: 5,
+                                    ),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '米粒をこの円内に\n収めてください',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.bold,
+                                        shadows: [
+                                          Shadow(
+                                            blurRadius: 15.0,
+                                            color: Colors.black,
+                                            offset: Offset(2.0, 2.0),
+                                          ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -303,10 +316,53 @@ void dispose() {
     context.read<CameraBloc>().add(CameraTakePhotoEvent());
   }
 
+  // タップフォーカス機能
+  void _onCameraViewTap(TapUpDetails details, CameraController controller) async {
+    if (!controller.value.isInitialized) return;
+    
+    try {
+      final offset = Offset(
+        details.localPosition.dx / controller.value.previewSize!.width,
+        details.localPosition.dy / controller.value.previewSize!.height,
+      );
+      await controller.setFocusPoint(offset);
+      await controller.setExposurePoint(offset);
+      print('フォーカス設定: ${offset.dx}, ${offset.dy}');
+    } catch (e) {
+      print('フォーカス設定エラー: $e');
+    }
+  }
+
+  // 撮影後の範囲調整画面への遷移
+  void _navigateToCropScreen(String imagePath) async {
+    final adjustedImagePath = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ImageCropScreen(imagePath: imagePath),
+      ),
+    );
+    
+    // 範囲調整完了後、結果画面に遷移
+    if (adjustedImagePath != null) {
+      _navigateToResult(adjustedImagePath);
+    }
+  }
+
   void _selectFromGallery() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
-      _navigateToResult(image.path);
+      // 範囲調整画面に遷移
+      final adjustedImagePath = await Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ImageCropScreen(imagePath: image.path),
+        ),
+      );
+      
+      // 範囲調整完了後、結果画面に遷移
+      if (adjustedImagePath != null) {
+        _navigateToResult(adjustedImagePath);
+      }
     }
   }
 
