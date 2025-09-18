@@ -212,12 +212,14 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   }
   
   /// 円形範囲を切り取った画像を作成
+ /// 円形範囲を切り取った画像を作成
+  /// 円形範囲を切り取った画像を作成
   Future<String> _cropCircularArea(img.Image originalImage, Matrix4 transform) async {
     final width = originalImage.width;
     final height = originalImage.height;
     
     // ガイドの円形範囲（画面上での固定値）
-    const guideRadius = 250.0; // 500x500の半径
+    const guideRadius = 250.0;
     final screenSize = MediaQuery.of(context).size;
     final screenCenterX = screenSize.width / 2;
     final screenCenterY = screenSize.height / 2;
@@ -229,11 +231,11 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     print('ガイド半径: ${guideRadius}');
     
     // InteractiveViewerの変換を正しく解釈
-    final scale = transform.getMaxScaleOnAxis();
+    final scaleX = transform.getMaxScaleOnAxis();
     final translation = transform.getTranslation();
     
     print('=== 変換情報 ===');
-    print('スケール: ${scale}');
+    print('スケール: ${scaleX}');
     print('平行移動: (${translation.x}, ${translation.y})');
     
     // 画像の表示サイズを計算（fit: BoxFit.contain）
@@ -256,11 +258,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     print('画像アスペクト比: ${imageAspectRatio}');
     print('画面アスペクト比: ${screenAspectRatio}');
     
-    // 変換後の表示サイズ
-    final scaledDisplayWidth = displayWidth * scale;
-    final scaledDisplayHeight = displayHeight * scale;
-    
-    // 変換なしの場合の画像中心位置
+    // 変換なしの場合の画像中心位置（画面の中央）
     final originalImageCenterX = screenSize.width / 2;
     final originalImageCenterY = screenSize.height / 2;
     
@@ -269,28 +267,26 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     final transformedImageCenterY = originalImageCenterY + translation.y;
     
     print('=== 変換後の画像中心 ===');
-    print('変換後表示サイズ: ${scaledDisplayWidth}x${scaledDisplayHeight}');
+    print('変換後表示サイズ: ${displayWidth * scaleX}x${displayHeight * scaleX}');
     print('変換後画像中心: (${transformedImageCenterX}, ${transformedImageCenterY})');
     
-    // ガイド中心から変換後画像中心への相対位置
+    // ガイド中心から変換後画像中心への相対位置（画面座標系）
     final relativeX = screenCenterX - transformedImageCenterX;
     final relativeY = screenCenterY - transformedImageCenterY;
     
     print('=== 相対位置 ===');
     print('ガイド中心からの相対位置: (${relativeX}, ${relativeY})');
     
-    // 相対位置を画像座標系に変換
-    final imageRelativeX = (relativeX / scaledDisplayWidth) * width;
-    final imageRelativeY = (relativeY / scaledDisplayHeight) * height;
+    // 画面座標系から画像座標系への変換（変換行列を考慮）
+    final imageRelativeX = (relativeX / (displayWidth * scaleX)) * width;
+    final imageRelativeY = (relativeY / (displayHeight * scaleX)) * height;
     
     // 元画像上でのガイド中心位置
     final imageCenterX = width / 2 + imageRelativeX;
     final imageCenterY = height / 2 + imageRelativeY;
     
-    // ガイド半径を元画像座標系に変換
-    final imageRadiusX = (guideRadius / scaledDisplayWidth) * width;
-    final imageRadiusY = (guideRadius / scaledDisplayHeight) * height;
-    final imageRadius = math.min(imageRadiusX, imageRadiusY); // より小さい方を使用
+    // ガイド半径を元画像座標系に変換（X軸基準で統一）
+    final imageRadius = (guideRadius / (displayWidth * scaleX)) * width;
     
     print('=== 元画像座標系での位置 ===');
     print('画像相対位置: (${imageRelativeX}, ${imageRelativeY})');
@@ -327,9 +323,9 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     
     print('切り取り完了: ${croppedImage.width}x${croppedImage.height}');
     
-    // 正方形にリサイズ（長辺に合わせる）
-    final maxSize = math.max(cropWidth, cropHeight);
-    final squareImage = img.copyResize(croppedImage, width: maxSize, height: maxSize);
+    // 正方形にリサイズ（長辺に合わせる、サイズを大幅に制限）
+    final targetSize = math.min(math.max(cropWidth, cropHeight), 512); // 最大512pxに制限
+    final squareImage = img.copyResize(croppedImage, width: targetSize, height: targetSize);
     
     // 円形マスクを適用
     final circularImage = _applyCircularMask(squareImage);

@@ -59,14 +59,15 @@ class ImageProcessorService {
   }
 
   /// ガイドに準拠した画像解析処理
+  /// ガイドに準拠した画像解析処理
   Future<Map<String, dynamic>> _performGuideBasedAnalysis(img.Image image, String originalPath) async {
     final width = image.width;
     final height = image.height;
     final centerX = width / 2;
     final centerY = height / 2;
     
-    // 500x500の円形範囲（半径250ピクセル）- ガイドと同じサイズ
-    const guideRadius = 250.0;
+    // 切り取り済み画像なので、画像全体を円形として扱う
+    final guideRadius = math.min(width, height) / 2.0;
     
     print('=== ガイド準拠解析開始 ===');
     print('画像サイズ: ${width}x${height}');
