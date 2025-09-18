@@ -278,8 +278,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     print('ガイド中心からの相対位置: (${relativeX}, ${relativeY})');
     
     // 画面座標系から画像座標系への変換（変換行列を考慮）
-    final imageRelativeX = (relativeX / (displayWidth * scaleX)) * width;
-    final imageRelativeY = (relativeY / (displayHeight * scaleX)) * height;
+final imageRelativeX = (relativeX / displayWidth) * width;
+final imageRelativeY = (relativeY / displayHeight) * height;
     
     // 元画像上でのガイド中心位置
     final imageCenterX = width / 2 + imageRelativeX;
