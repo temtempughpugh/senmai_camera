@@ -109,13 +109,29 @@ class ImageProcessorService {
     print('=== Step 1: 背景削除完了 ===');
     print('米粒ピクセル数: $ricePixelCount');
     
-    // Step 2: 米粒を1粒ずつ分離
-    final individualGrains = _extractIndividualGrains(image, ricePixels);
+    // Step 2: 背景境界から一律で境界部分を除外
+    final boundaryFilteredPixels = _removeBoundaryPixels(ricePixels, width, height);
     
-    print('=== Step 2: 米粒分離完了 ===');
+    print('=== Step 2: 境界除外完了 ===');
+    print('境界除外前: ${ricePixels.length} → 境界除外後: ${boundaryFilteredPixels.length} ピクセル');
+    
+    // Step 3: 米粒を1粒ずつ分離
+    final individualGrains = _extractIndividualGrains(image, boundaryFilteredPixels);
+    
+    print('=== Step 3: 米粒分離完了 ===');
     print('検出された米粒数: ${individualGrains.length}個');
     
-    // Step 3: 各米粒の平均明度を計算
+    // 各米粒の中心点を取得
+    final grainCenters = <Point>[];
+    for (final grain in individualGrains) {
+      final center = _calculateCentroid(grain);
+      grainCenters.add(center);
+    }
+    
+    print('=== Step 3: 米粒分離完了 ===');
+    print('検出された米粒数: ${individualGrains.length}個');
+    
+    // Step 4: 各米粒の平均明度を計算
     final grainBrightnesses = <double>[];
     for (final grain in individualGrains) {
       final avgBrightness = _calculateGrainAverageBrightness(image, grain);
@@ -128,22 +144,22 @@ class ImageProcessorService {
         ? sortedGrainBrightnesses[sortedGrainBrightnesses.length ~/ 2] 
         : 0.0;
     
-    // Step 4: 明度による詳細グループ分け（5段階）
+    // Step 5: 明度による詳細グループ分け（5段階）
     final grainGroups = _classifyGrainsByBrightness(individualGrains, grainBrightnesses);
     
-    print('=== Step 4: 詳細グループ分け完了 ===');
+    print('=== Step 5: 詳細グループ分け完了 ===');
     print('最明るい米: ${grainGroups['brightest']?.length ?? 0}個');
     print('明るい米: ${grainGroups['bright']?.length ?? 0}個');
     print('中間米: ${grainGroups['medium']?.length ?? 0}個');
     print('暗い米: ${grainGroups['dark']?.length ?? 0}個');
     print('最暗い米: ${grainGroups['darkest']?.length ?? 0}個');
     
-    // Step 5: グループ別に各米粒内のピクセル単位解析
+    // Step 6: 全グループで解析（黒も含む）
     var totalAbsorptionPixels = 0;
     var totalGrainPixels = 0;
     
-    // 各グループごとに異なるロジックで解析
-    final groupNames = ['brightest', 'bright', 'medium', 'dark', 'darkest'];
+    // 全グループを解析対象に
+    final analysisGroupNames = ['brightest', 'bright', 'medium', 'dark', 'darkest'];
     final groupColors = [
       img.ColorRgb8(255, 255, 255), // 最明るい=白
       img.ColorRgb8(255, 255, 0),   // 明るい=黄
@@ -152,8 +168,8 @@ class ImageProcessorService {
       img.ColorRgb8(0, 0, 0),       // 最暗い=黒
     ];
     
-    for (int groupIndex = 0; groupIndex < groupNames.length; groupIndex++) {
-      final groupName = groupNames[groupIndex];
+    for (int groupIndex = 0; groupIndex < analysisGroupNames.length; groupIndex++) {
+      final groupName = analysisGroupNames[groupIndex];
       final grains = grainGroups[groupName] ?? [];
       
       if (grains.isEmpty) continue;
@@ -162,7 +178,15 @@ class ImageProcessorService {
       
       for (int i = 0; i < grains.length; i++) {
         final grain = grains[i];
-        final pixelResults = _analyzeGrainByGroup(image, grain, groupIndex);
+        List<Map<String, dynamic>> pixelResults;
+        
+        if (groupName == 'darkest') {
+          // 黒グループは45%基準
+          pixelResults = _analyzeGrainBlackGroup(image, grain);
+        } else {
+          // その他のグループは80%基準
+          pixelResults = _analyzeGrainUniform(image, grain);
+        }
         
         // ピクセルごとに色分け
         for (final pixelResult in pixelResults) {
@@ -183,11 +207,16 @@ class ImageProcessorService {
       }
     }
     
+    print('=== 全グループ（黒含む）を解析に含む ===');
+    
+    // 除外された境界部分をグレーでマーク
+    _markExcludedBoundaries(debugImage, ricePixels, boundaryFilteredPixels);
+    
     // メイン解析画像を保存（白濁判定結果）- 元画像サイズに拡大
     await _saveDebugImageResized(debugImage, originalPath, originalWidth, originalHeight);
     
     // 分類画像を保存（グループ別色分け）- 元画像サイズに拡大
-    await _saveClassificationImageResized(image, grainGroups, groupColors, originalPath, originalWidth, originalHeight);
+    await _saveClassificationImageResized(image, grainGroups, groupColors, grainCenters, originalPath, originalWidth, originalHeight);
     
     // 統計計算
     final avgBrightness = ricePixelCount > 0 ? totalBrightness / ricePixelCount : 0.0;
@@ -207,6 +236,59 @@ class ImageProcessorService {
       'grainCount': individualGrains.length,
       'medianBrightness': medianBrightness,
     };
+  }
+
+  /// 背景境界から一律でピクセルを除外
+  List<Point> _removeBoundaryPixels(List<Point> ricePixels, int width, int height) {
+    const boundaryPixels = 1; // 境界から1ピクセル分を除外
+    
+    // 米粒ピクセルをマップ化
+    final ricePixelMap = List.generate(height, (i) => List.filled(width, false));
+    for (final point in ricePixels) {
+      ricePixelMap[point.y][point.x] = true;
+    }
+    
+    final filteredPixels = <Point>[];
+    
+    // 各米粒ピクセルについて、背景との距離をチェック
+    for (final point in ricePixels) {
+      bool shouldKeep = true;
+      
+      // boundaryPixels範囲内に背景があるかチェック
+      for (int dy = -boundaryPixels; dy <= boundaryPixels; dy++) {
+        for (int dx = -boundaryPixels; dx <= boundaryPixels; dx++) {
+          final checkX = point.x + dx;
+          final checkY = point.y + dy;
+          
+          // 範囲外または背景ピクセルが見つかったら除外
+          if (checkX < 0 || checkY < 0 || checkX >= width || checkY >= height || 
+              !ricePixelMap[checkY][checkX]) {
+            shouldKeep = false;
+            break;
+          }
+        }
+        if (!shouldKeep) break;
+      }
+      
+      if (shouldKeep) {
+        filteredPixels.add(point);
+      }
+    }
+    
+    return filteredPixels;
+  }
+
+  /// 除外された境界部分をデバッグ画像にマーク
+  void _markExcludedBoundaries(img.Image debugImage, List<Point> originalPixels, List<Point> filteredPixels) {
+    // フィルタされたピクセルをセットに変換（高速検索用）
+    final filteredPixelSet = filteredPixels.toSet();
+    
+    // 除外されたピクセルをグレーでマーク
+    for (final pixel in originalPixels) {
+      if (!filteredPixelSet.contains(pixel)) {
+        debugImage.setPixel(pixel.x, pixel.y, img.ColorRgb8(128, 128, 128)); // 除外部分=グレー
+      }
+    }
   }
 
   /// 米粒を1粒ずつ分離（距離変換 + ローカルマキシマ版）
@@ -236,7 +318,7 @@ class ImageProcessorService {
     // Step 5: サイズフィルタリング
     final filteredGrains = <List<Point>>[];
     for (final grain in grains) {
-      if (grain.length > 30 && grain.length < 3000) { // サイズ調整
+      if (grain.length > 50 && grain.length < 2000) { // サイズ範囲を調整
         filteredGrains.add(grain);
       }
     }
@@ -312,7 +394,7 @@ class ImageProcessorService {
   /// ローカルマキシマ検出（米粒の中心候補）
   List<Point> _findLocalMaxima(List<List<double>> distanceMap, List<List<bool>> riceMap, int width, int height) {
     final centers = <Point>[];
-    final minDistance = 3.0; // 最低距離（小さすぎる米粒は除外）
+    final minDistance = 2.0; // 最低距離を下げて、より多くの中心を検出
     
     for (int y = 1; y < height - 1; y++) {
       for (int x = 1; x < width - 1; x++) {
@@ -436,14 +518,8 @@ class ImageProcessorService {
     return groups;
   }
 
-  /// グループ別の解析ロジック（全て相対判定に統一）
-  List<Map<String, dynamic>> _analyzeGrainByGroup(img.Image image, List<Point> grain, int groupIndex) {
-    // グループに関係なく、全て相対判定で統一
-    return _analyzeGrainRelative(image, grain);
-  }
-
-  /// 相対判定による米粒解析（縁の影を考慮）
-  List<Map<String, dynamic>> _analyzeGrainRelative(img.Image image, List<Point> grain) {
+  /// 一律判定による米粒解析（明度差のみで判断）
+  List<Map<String, dynamic>> _analyzeGrainUniform(img.Image image, List<Point> grain) {
     final results = <Map<String, dynamic>>[];
     
     // 米粒内の明度分布を取得
@@ -454,51 +530,60 @@ class ImageProcessorService {
     
     if (brightnesses.isEmpty) return results;
     
-    // 重心を計算（縁判定に使用）
-    final centroid = _calculateCentroid(grain);
-    
     // 統計値計算
     final median = brightnesses[brightnesses.length ~/ 2];
-    final top60Threshold = brightnesses[(brightnesses.length * 0.6).round()];
+    final top80Threshold = brightnesses[(brightnesses.length * 0.45).round()];
     final maxBrightness = brightnesses.last;
     final minBrightness = brightnesses.first;
     final range = maxBrightness - minBrightness;
     
-    // 米粒の最大半径を計算
-    final maxRadius = _calculateMaxDistance(grain, centroid.x.toDouble(), centroid.y.toDouble());
+    // 各ピクセルを解析（一律判定）
+    for (final point in grain) {
+      final pixel = image.getPixel(point.x, point.y);
+      final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+      
+      bool isAbsorbed = false;
+      
+      // 明度差のみで一律判定
+      if (range > 20) {
+        // 明度差がある場合：上位80%を吸水と判定
+        isAbsorbed = brightness >= top80Threshold;
+      } else if (range <= 10) {
+        // 明度が均一な場合：中央値+5で判定
+        isAbsorbed = brightness >= median + 5;
+      } else {
+        // 中間の場合：上位80%基準を使用
+        isAbsorbed = brightness >= top80Threshold;
+      }
+      
+      results.add({'point': point, 'isAbsorbed': isAbsorbed});
+    }
+    
+    return results;
+  }
+
+  /// 黒グループ専用解析（45%が吸水になるよう調整）
+  List<Map<String, dynamic>> _analyzeGrainBlackGroup(img.Image image, List<Point> grain) {
+    final results = <Map<String, dynamic>>[];
+    
+    // 米粒内の明度分布を取得
+    final brightnesses = grain.map((p) {
+      final pixel = image.getPixel(p.x, p.y);
+      return (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+    }).toList()..sort();
+    
+    if (brightnesses.isEmpty) return results;
+    
+    // 45%が吸水になるよう設定（上位45%）
+    final top45Threshold = brightnesses[(brightnesses.length * 0.45).round()];
     
     // 各ピクセルを解析
     for (final point in grain) {
       final pixel = image.getPixel(point.x, point.y);
       final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
       
-      // 重心からの距離を計算
-      final distanceFromCenter = _calculateDistanceFromCenter(point, centroid);
-      final distanceRatio = maxRadius > 0 ? distanceFromCenter / maxRadius : 0.0;
-      
-      bool isAbsorbed = false;
-      
-      // 縁の影を考慮した判定
-      if (distanceRatio > 0.7) {
-        // 縁に近い部分（70%以上）：影の影響を考慮して基準を緩める
-        if (range > 15) {
-          // 明度差がある場合：上位70%を吸水と判定（縁は甘く）
-          final top70Threshold = brightnesses[(brightnesses.length * 0.7).round()];
-          isAbsorbed = brightness >= top70Threshold;
-        } else {
-          // 明度が均一な場合：中央値ベースで判定
-          isAbsorbed = brightness >= median;
-        }
-      } else {
-        // 中心部分：通常の判定
-        if (range > 20) {
-          // 明度差がある場合：上位60%を吸水と判定
-          isAbsorbed = brightness >= top60Threshold;
-        } else {
-          // 明度が均一な場合：中央値+閾値で判定
-          isAbsorbed = brightness >= median + 5;
-        }
-      }
+      // 上位45%を吸水と判定
+      final isAbsorbed = brightness >= top45Threshold;
       
       results.add({'point': point, 'isAbsorbed': isAbsorbed});
     }
@@ -530,9 +615,9 @@ class ImageProcessorService {
     }
   }
 
-  /// 分類画像を元画像サイズに拡大して保存（グループ別色分け）
+  /// 分類画像を元画像サイズに拡大して保存（グループ別色分け + 中心点プロット）
   Future<void> _saveClassificationImageResized(img.Image originalImage, Map<String, List<List<Point>>> grainGroups, 
-                                             List<img.Color> groupColors, String originalPath, int targetWidth, int targetHeight) async {
+                                             List<img.Color> groupColors, List<Point> grainCenters, String originalPath, int targetWidth, int targetHeight) async {
     try {
       final classificationImage = img.Image.from(originalImage);
       
@@ -556,6 +641,22 @@ class ImageProcessorService {
         }
       }
       
+      // 中心点を小さく赤でプロット（3x3ピクセル）
+      for (final center in grainCenters) {
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            final plotX = center.x + dx;
+            final plotY = center.y + dy;
+            if (plotX >= 0 && plotY >= 0 && plotX < classificationImage.width && plotY < classificationImage.height) {
+              classificationImage.setPixel(plotX, plotY, img.ColorRgb8(255, 0, 0)); // 赤色
+            }
+          }
+        }
+      }
+      
+      // 各米粒の境界線を白で描画
+      _drawGrainBoundaries(classificationImage, grainGroups);
+      
       // 元画像サイズに拡大
       final resizedClassificationImage = img.copyResize(classificationImage, width: targetWidth, height: targetHeight);
       
@@ -572,8 +673,47 @@ class ImageProcessorService {
       await File(classificationPath).writeAsBytes(pngBytes);
       
       print('分類画像を保存 (${targetWidth}x${targetHeight}): $classificationPath');
+      print('中心点${grainCenters.length}個をプロット');
     } catch (e) {
       print('分類画像保存エラー: $e');
+    }
+  }
+
+  /// 各米粒の境界線を描画
+  void _drawGrainBoundaries(img.Image image, Map<String, List<List<Point>>> grainGroups) {
+    final groupNames = ['brightest', 'bright', 'medium', 'dark', 'darkest'];
+    
+    for (final groupName in groupNames) {
+      final grains = grainGroups[groupName] ?? [];
+      
+      for (final grain in grains) {
+        // 各米粒の境界ピクセルを検出
+        for (final point in grain) {
+          // 8近傍をチェック
+          bool isBoundary = false;
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              if (dx == 0 && dy == 0) continue;
+              
+              final checkX = point.x + dx;
+              final checkY = point.y + dy;
+              
+              // 範囲外か、この米粒に属さないピクセルがあれば境界
+              if (checkX < 0 || checkY < 0 || checkX >= image.width || checkY >= image.height ||
+                  !grain.contains(Point(checkX, checkY))) {
+                isBoundary = true;
+                break;
+              }
+            }
+            if (isBoundary) break;
+          }
+          
+          // 境界ピクセルを白で描画
+          if (isBoundary) {
+            image.setPixel(point.x, point.y, img.ColorRgb8(255, 255, 255)); // 白色
+          }
+        }
+      }
     }
   }
 
