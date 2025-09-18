@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/widgets.dart';
 
 // Events
 abstract class CameraEvent extends Equatable {
@@ -61,21 +62,27 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     try {
       emit(CameraLoadingState());
       
-      // カメラを取得（背面カメラを優先）
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         emit(CameraErrorState('カメラが見つかりません'));
         return;
       }
       
+      // iPhone 15のアスペクト比（19.5:9）に最も近い解像度を選択
       _controller = CameraController(
         cameras.first,
-        ResolutionPreset.high,
+        ResolutionPreset.max, // 最高解像度でiPhone 15のアスペクト比に近づける
+        enableAudio: false,
       );
       
       await _controller!.initialize();
+      
+      print('カメラ解像度: ${_controller!.value.previewSize}');
+      print('カメラアスペクト比: ${_controller!.value.aspectRatio}');
+      
       emit(CameraReadyState(_controller!));
     } catch (e) {
+      print('カメラ初期化エラー: $e');
       emit(CameraErrorState('カメラ初期化エラー: $e'));
     }
   }
@@ -90,9 +97,8 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
       final image = await _controller!.takePicture();
       emit(CameraPhotoTakenState(image.path));
       
-      // Future.delayedを使わずに直接Ready状態に戻す
-      // ただし、画面遷移処理中は状態を変更しない
     } catch (e) {
+      print('撮影エラー: $e');
       emit(CameraErrorState('撮影エラー: $e'));
     }
   }

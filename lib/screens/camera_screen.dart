@@ -24,11 +24,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     _initializeCamera();
   }
 
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // アプリがフォアグラウンドに戻ったときにカメラを再初期化
       final currentState = context.read<CameraBloc>().state;
       if (currentState is! CameraReadyState) {
         _initializeCamera();
@@ -41,40 +39,15 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // 画面に戻ってきたときにカメラを再初期化
-    final currentState = context.read<CameraBloc>().state;
-    if (currentState is! CameraReadyState) {
-      _initializeCamera();
-    }
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    context.read<CameraBloc>().add(CameraDisposeEvent());
+    super.dispose();
   }
-
-@override
-void dispose() {
-  WidgetsBinding.instance.removeObserver(this);
-  context.read<CameraBloc>().add(CameraDisposeEvent());
-  super.dispose();
-}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('米吸水率判定'),
-        backgroundColor: Colors.blue[800],
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.history),
-            onPressed: () => _navigateToHistory(),
-          ),
-          IconButton(
-            icon: Icon(Icons.settings),
-            onPressed: () => _navigateToSettings(),
-          ),
-        ],
-      ),
       body: BlocListener<CameraBloc, CameraState>(
         listener: (context, state) {
           print('BlocListener: カメラ状態変更 - ${state.runtimeType}');
@@ -82,7 +55,7 @@ void dispose() {
             print('撮影完了 - 範囲調整画面に遷移: ${state.imagePath}');
             _navigateToCropScreen(state.imagePath);
             
-            // 撮影完了後、すぐにカメラを再初期化
+            // 撮影完了後、カメラを再初期化
             Future.delayed(Duration(milliseconds: 500), () {
               if (mounted) {
                 print('カメラを自動再初期化');
@@ -91,13 +64,11 @@ void dispose() {
             });
           }
         },
-        child: Column(
+        child: Stack(
           children: [
-            // カメラプレビュー部分
-            Expanded(
-              flex: 4,
+            // カメラプレビュー（適切なアスペクト比で表示）
+            Positioned.fill(
               child: Container(
-                width: double.infinity,
                 color: Colors.black,
                 child: BlocBuilder<CameraBloc, CameraState>(
                   builder: (context, state) {
@@ -106,70 +77,18 @@ void dispose() {
                         child: CircularProgressIndicator(color: Colors.white),
                       );
                     } else if (state is CameraReadyState) {
-                      return Stack(
-                        children: [
-                          // カメラプレビュー（タップフォーカス対応）
-                          Positioned.fill(
-                            child: GestureDetector(
-                              onTapUp: (details) {
-                                _onCameraViewTap(details, state.controller);
-                              },
-                              child: AspectRatio(
-                                aspectRatio: state.controller.value.aspectRatio,
-                                child: state.controller.buildPreview(),
-                              ),
-                            ),
-                          ),
-                          // 大きな撮影ガイド（強制的に画面からはみ出す正円）
-                          Positioned.fill(
-                            child: OverflowBox(
-                              maxWidth: double.infinity,
-                              maxHeight: double.infinity,
-                              child: Center(
-                                child: Container(
-                                  width: 500, // 500x500に設定
-                                  height: 500, // 同じ値で正円
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: Colors.red,
-                                      width: 5,
-                                    ),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      '米粒をこの円内に\n収めてください',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.bold,
-                                        shadows: [
-                                          Shadow(
-                                            blurRadius: 15.0,
-                                            color: Colors.black,
-                                            offset: Offset(2.0, 2.0),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                      return Center(
+                        child: GestureDetector(
+                          onTapUp: (details) => _onCameraViewTap(details, state.controller),
+                          child: CameraPreview(state.controller),
+                        ),
                       );
                     } else if (state is CameraErrorState) {
                       return Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.error_outline,
-                              color: Colors.white,
-                              size: 64,
-                            ),
+                            Icon(Icons.error_outline, color: Colors.white, size: 64),
                             SizedBox(height: 16),
                             Text(
                               state.error,
@@ -196,83 +115,123 @@ void dispose() {
               ),
             ),
             
-            // 操作ボタン部分
-            Expanded(
-              flex: 1,
-              child: Container(
-                padding: EdgeInsets.all(20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // ギャラリー選択ボタン
-                    _buildActionButton(
-                      icon: Icons.photo_library,
-                      label: 'ギャラリー',
-                      onPressed: _selectFromGallery,
+            // 上部のAppBar
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Container(
+                  height: 56,
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.7),
+                        Colors.transparent,
+                      ],
                     ),
-                    
-                    // 撮影ボタン
-                    BlocBuilder<CameraBloc, CameraState>(
-                      builder: (context, state) {
-                        return Column(
-                          children: [
-                            GestureDetector(
-                              onTap: () {
-                                print('撮影ボタンタップ - 現在の状態: ${state.runtimeType}');
-                                if (state is CameraReadyState) {
-                                  _takePhoto();
-                                } else {
-                                  print('カメラが準備できていません');
-                                }
-                              },
-                              child: Container(
-                                width: 80,
-                                height: 80,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: state is CameraReadyState 
-                                      ? Colors.white 
-                                      : Colors.grey,
-                                  border: Border.all(
-                                    color: Colors.blue[800]!,
-                                    width: 4,
-                                  ),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        '米吸水率判定',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Spacer(),
+                      IconButton(
+                        icon: Icon(Icons.history, color: Colors.white),
+                        onPressed: () => _navigateToHistory(),
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.settings, color: Colors.white),
+                        onPressed: () => _navigateToSettings(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            
+            // 下部のボタン
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Container(
+                  height: 120,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.bottomCenter,
+                      end: Alignment.topCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.8),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // ギャラリー選択ボタン
+                      _buildActionButton(
+                        icon: Icons.photo_library,
+                        label: 'ギャラリー',
+                        onPressed: _selectFromGallery,
+                      ),
+                      
+                      // 撮影ボタン
+                      BlocBuilder<CameraBloc, CameraState>(
+                        builder: (context, state) {
+                          return GestureDetector(
+                            onTap: () {
+                              print('撮影ボタンタップ - 現在の状態: ${state.runtimeType}');
+                              if (state is CameraReadyState) {
+                                _takePhoto();
+                              } else {
+                                print('カメラが準備できていません');
+                              }
+                            },
+                            child: Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: state is CameraReadyState 
+                                    ? Colors.white 
+                                    : Colors.grey,
+                                border: Border.all(
+                                  color: Colors.blue[800]!,
+                                  width: 4,
                                 ),
-                                child: Icon(
-                                  Icons.camera_alt,
-                                  size: 40,
-                                  color: state is CameraReadyState 
-                                      ? Colors.blue[800] 
-                                      : Colors.grey[600],
-                                ),
+                              ),
+                              child: Icon(
+                                Icons.camera_alt,
+                                size: 40,
+                                color: state is CameraReadyState 
+                                    ? Colors.blue[800] 
+                                    : Colors.grey[600],
                               ),
                             ),
-                            // デバッグ用：強制再初期化ボタン
-                            SizedBox(height: 8),
-                            if (state is! CameraReadyState)
-                              ElevatedButton(
-                                onPressed: () {
-                                  print('強制カメラ再初期化');
-                                  _initializeCamera();
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.orange,
-                                ),
-                                child: Text('カメラ再起動', 
-                                  style: TextStyle(fontSize: 10)),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
-                    
-                    // 設定ボタン
-                    _buildActionButton(
-                      icon: Icons.tune,
-                      label: '設定',
-                      onPressed: _navigateToSettings,
-                    ),
-                  ],
+                          );
+                        },
+                      ),
+                      
+                      // 設定ボタン
+                      _buildActionButton(
+                        icon: Icons.tune,
+                        label: '設定',
+                        onPressed: _navigateToSettings,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -294,8 +253,8 @@ void dispose() {
           onPressed: onPressed,
           icon: Icon(icon, size: 32),
           style: IconButton.styleFrom(
-            backgroundColor: Colors.blue[100],
-            foregroundColor: Colors.blue[800],
+            backgroundColor: Colors.white.withOpacity(0.2),
+            foregroundColor: Colors.white,
             padding: EdgeInsets.all(12),
           ),
         ),
@@ -304,7 +263,7 @@ void dispose() {
           label,
           style: TextStyle(
             fontSize: 12,
-            color: Colors.blue[800],
+            color: Colors.white,
           ),
         ),
       ],
@@ -316,24 +275,28 @@ void dispose() {
     context.read<CameraBloc>().add(CameraTakePhotoEvent());
   }
 
-  // タップフォーカス機能
   void _onCameraViewTap(TapUpDetails details, CameraController controller) async {
     if (!controller.value.isInitialized) return;
     
     try {
+      // タップ位置を正規化（0.0-1.0の範囲）
+      final RenderBox renderBox = context.findRenderObject() as RenderBox;
       final offset = Offset(
-        details.localPosition.dx / controller.value.previewSize!.width,
-        details.localPosition.dy / controller.value.previewSize!.height,
+        details.localPosition.dx / renderBox.size.width,
+        details.localPosition.dy / renderBox.size.height,
       );
+      
+      print('フォーカス設定: ${offset.dx.toStringAsFixed(3)}, ${offset.dy.toStringAsFixed(3)}');
+      
+      // フォーカスと露出を設定
       await controller.setFocusPoint(offset);
       await controller.setExposurePoint(offset);
-      print('フォーカス設定: ${offset.dx}, ${offset.dy}');
+      
     } catch (e) {
       print('フォーカス設定エラー: $e');
     }
   }
 
-  // 撮影後の範囲調整画面への遷移
   void _navigateToCropScreen(String imagePath) async {
     final adjustedImagePath = await Navigator.push<String>(
       context,
@@ -342,7 +305,6 @@ void dispose() {
       ),
     );
     
-    // 範囲調整完了後、結果画面に遷移
     if (adjustedImagePath != null) {
       _navigateToResult(adjustedImagePath);
     }
@@ -351,7 +313,6 @@ void dispose() {
   void _selectFromGallery() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
-      // 範囲調整画面に遷移
       final adjustedImagePath = await Navigator.push<String>(
         context,
         MaterialPageRoute(
@@ -359,7 +320,6 @@ void dispose() {
         ),
       );
       
-      // 範囲調整完了後、結果画面に遷移
       if (adjustedImagePath != null) {
         _navigateToResult(adjustedImagePath);
       }

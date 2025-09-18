@@ -15,7 +15,7 @@ class ImageCropScreen extends StatefulWidget {
 
 class _ImageCropScreenState extends State<ImageCropScreen> {
   // 円形ガイドの状態（画面表示座標系）
-  double _circleRadius = 150.0;
+  double _circleRadius = 250.0;  // デフォルトサイズを250pxに変更
   Offset _circleCenter = Offset(0, 0); // 画面中央からの相対位置
   
   // 画像情報
@@ -88,10 +88,10 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                         _circleCenter.dy + details.focalPointDelta.dy,
                       );
                       
-                      // 拡大縮小処理
+                      // 拡大縮小処理（感度を下げる）
                       if (details.scale != 1.0) {
-                        final scaleDelta = (details.scale - 1.0) * 50;
-                        _circleRadius = (_circleRadius + scaleDelta).clamp(50.0, 300.0);
+                        final scaleDelta = (details.scale - 1.0) * 20; // 50→20に変更
+                        _circleRadius = (_circleRadius + scaleDelta).clamp(100.0, 400.0); // 範囲を100-400に変更
                       }
                     });
                   },
@@ -117,7 +117,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                       mini: true,
                       onPressed: () {
                         setState(() {
-                          _circleRadius = (_circleRadius + 20).clamp(50.0, 300.0);
+                          _circleRadius = (_circleRadius + 30).clamp(100.0, 400.0); // 20→30に変更
                         });
                       },
                       child: Icon(Icons.add),
@@ -141,7 +141,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                       mini: true,
                       onPressed: () {
                         setState(() {
-                          _circleRadius = (_circleRadius - 20).clamp(50.0, 300.0);
+                          _circleRadius = (_circleRadius - 30).clamp(100.0, 400.0); // 20→30に変更
                         });
                       },
                       child: Icon(Icons.remove),
@@ -208,7 +208,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
 
   void _resetCircle() {
     setState(() {
-      _circleRadius = 150.0;
+      _circleRadius = 250.0; // リセット時も250pxに変更
       _circleCenter = Offset(0, 0);
     });
   }
