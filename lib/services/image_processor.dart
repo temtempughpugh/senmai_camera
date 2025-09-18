@@ -24,7 +24,7 @@ class ImageProcessorService {
   static final ImageProcessorService instance = ImageProcessorService._init();
   ImageProcessorService._init();
 
-  /// 画像を解析して吸水率を予測（円形範囲限定版）
+  /// 画像を解析して吸水率を予測（ガイド準拠版）
   Future<AnalysisResult> analyzeImage(String imagePath) async {
     try {
       // 画像ファイルを読み込み
@@ -37,11 +37,8 @@ class ImageProcessorService {
         throw Exception('画像の読み込みに失敗しました');
       }
 
-      // 処理しやすいサイズに調整（512x512の正方形に統一）
-      final resizedImage = img.copyResize(image, width: 512, height: 512);
-      
-      // 円形範囲内の画像解析を実行
-      final analysisData = await _performCircleImageAnalysis(resizedImage, imagePath);
+      // ガイドに準拠した円形範囲内の画像解析を実行
+      final analysisData = await _performGuideBasedAnalysis(image, imagePath);
       
       // 吸水率を計算
       final predictedRate = _calculateAbsorptionRate(analysisData);
@@ -61,26 +58,19 @@ class ImageProcessorService {
     }
   }
 
-  /// 円形範囲内の画像解析処理
-  Future<Map<String, dynamic>> _performCircleImageAnalysis(img.Image image, String originalPath) async {
-    // 元画像のサイズを保存
-    final originalBytes = await File(originalPath).readAsBytes();
-    final originalImage = img.decodeImage(originalBytes);
-    final originalWidth = originalImage?.width ?? image.width;
-    final originalHeight = originalImage?.height ?? image.height;
-    
+  /// ガイドに準拠した画像解析処理
+  Future<Map<String, dynamic>> _performGuideBasedAnalysis(img.Image image, String originalPath) async {
     final width = image.width;
     final height = image.height;
     final centerX = width / 2;
     final centerY = height / 2;
     
-    // 500x500の円形範囲に対応する半径を計算（512x512画像での比率）
-    final circleRadius = (500.0 / 2.0) * (512.0 / math.max(originalWidth, originalHeight));
+    // 500x500の円形範囲（半径250ピクセル）- ガイドと同じサイズ
+    const guideRadius = 250.0;
     
-    print('=== 円形範囲解析開始 ===');
+    print('=== ガイド準拠解析開始 ===');
     print('画像サイズ: ${width}x${height}');
-    print('円形範囲の中心: (${centerX.toStringAsFixed(1)}, ${centerY.toStringAsFixed(1)})');
-    print('円形範囲の半径: ${circleRadius.toStringAsFixed(1)}');
+    print('解析範囲: 中心(${centerX.toStringAsFixed(1)}, ${centerY.toStringAsFixed(1)}) 半径${guideRadius}px');
     
     // 解析結果保存用の画像を作成
     final debugImage = img.Image.from(image);
@@ -89,17 +79,17 @@ class ImageProcessorService {
     var ricePixelCount = 0;
     final brightnessList = <double>[];
     
-    // Step 1: 円形範囲内での背景削除 & 米粒エリアの特定
+    // Step 1: ガイド範囲内での背景削除 & 米粒エリアの特定
     final ricePixels = <Point>[];
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
-        // 円形範囲内かチェック
+        // ガイド範囲内かチェック（500x500の円形）
         final distanceFromCenter = math.sqrt(
           math.pow(x - centerX, 2) + math.pow(y - centerY, 2)
         );
         
-        if (distanceFromCenter > circleRadius) {
-          // 円形範囲外は灰色でマーク
+        if (distanceFromCenter > guideRadius) {
+          // ガイド範囲外は灰色でマーク
           debugImage.setPixel(x, y, img.ColorRgb8(64, 64, 64));
           continue;
         }
@@ -127,8 +117,8 @@ class ImageProcessorService {
       }
     }
     
-    print('=== Step 1: 円形範囲内背景削除完了 ===');
-    print('円形範囲内米粒ピクセル数: $ricePixelCount');
+    print('=== Step 1: ガイド範囲内背景削除完了 ===');
+    print('ガイド範囲内米粒ピクセル数: $ricePixelCount');
     
     // Step 2: 境界から一律で境界部分を除外
     final boundaryFilteredPixels = _removeBoundaryPixels(ricePixels, width, height);
@@ -225,26 +215,26 @@ class ImageProcessorService {
       }
     }
     
-    print('=== 円形範囲内の全グループ解析完了 ===');
+    print('=== ガイド範囲内の全グループ解析完了 ===');
     
     // 除外された境界部分をグレーでマーク
     _markExcludedBoundaries(debugImage, ricePixels, boundaryFilteredPixels);
     
-    // 円形範囲の境界線を描画
-    _drawCircleBoundary(debugImage, centerX, centerY, circleRadius);
+    // ガイド範囲の境界線を描画
+    _drawGuideBoundary(debugImage, centerX, centerY, guideRadius);
     
-    // メイン解析画像を保存（白濁判定結果）- 元画像サイズに拡大
-    await _saveDebugImageResized(debugImage, originalPath, originalWidth, originalHeight);
+    // メイン解析画像を保存（白濁判定結果）
+    await _saveDebugImage(debugImage, originalPath);
     
-    // 分類画像を保存（グループ別色分け）- 元画像サイズに拡大
-    await _saveClassificationImageResized(image, grainGroups, groupColors, grainCenters, originalPath, originalWidth, originalHeight, centerX, centerY, circleRadius);
+    // 分類画像を保存（グループ別色分け）
+    await _saveClassificationImage(image, grainGroups, groupColors, grainCenters, originalPath, centerX, centerY, guideRadius);
     
     // 統計計算
     final avgBrightness = ricePixelCount > 0 ? totalBrightness / ricePixelCount : 0.0;
     final brightnessStd = _calculateStandardDeviation(brightnessList, avgBrightness);
     final whiteAreaRatio = totalGrainPixels > 0 ? (totalAbsorptionPixels / totalGrainPixels) * 100 : 0.0;
     
-    print('=== 最終結果（円形範囲内） ===');
+    print('=== 最終結果（ガイド範囲内） ===');
     print('総吸水ピクセル数: $totalAbsorptionPixels');
     print('総米粒ピクセル数: $totalGrainPixels');
     print('白濁面積率: ${whiteAreaRatio.toStringAsFixed(1)}%');
@@ -259,8 +249,8 @@ class ImageProcessorService {
     };
   }
 
-  /// 円形境界線を描画
-  void _drawCircleBoundary(img.Image debugImage, double centerX, double centerY, double radius) {
+  /// ガイド境界線を描画
+  void _drawGuideBoundary(img.Image debugImage, double centerX, double centerY, double radius) {
     final width = debugImage.width;
     final height = debugImage.height;
     
@@ -628,12 +618,9 @@ class ImageProcessorService {
     return results;
   }
 
-  /// デバッグ画像を元画像サイズに拡大して保存
-  Future<void> _saveDebugImageResized(img.Image debugImage, String originalPath, int targetWidth, int targetHeight) async {
+  /// デバッグ画像を保存
+  Future<void> _saveDebugImage(img.Image debugImage, String originalPath) async {
     try {
-      // 512x512の解析画像を元画像サイズに拡大
-      final resizedDebugImage = img.copyResize(debugImage, width: targetWidth, height: targetHeight);
-      
       final directory = await getApplicationDocumentsDirectory();
       final debugDir = Directory('${directory.path}/debug_images');
       if (!await debugDir.exists()) {
@@ -643,19 +630,19 @@ class ImageProcessorService {
       final fileName = 'debug_${DateTime.now().millisecondsSinceEpoch}.png';
       final debugPath = '${debugDir.path}/$fileName';
       
-      final pngBytes = img.encodePng(resizedDebugImage);
+      final pngBytes = img.encodePng(debugImage);
       await File(debugPath).writeAsBytes(pngBytes);
       
-      print('デバッグ画像を保存 (${targetWidth}x${targetHeight}): $debugPath');
+      print('デバッグ画像を保存: $debugPath');
     } catch (e) {
       print('デバッグ画像保存エラー: $e');
     }
   }
 
-  /// 分類画像を元画像サイズに拡大して保存（グループ別色分け + 中心点プロット + 円形境界）
-  Future<void> _saveClassificationImageResized(img.Image originalImage, Map<String, List<List<Point>>> grainGroups, 
-                                             List<img.Color> groupColors, List<Point> grainCenters, String originalPath, 
-                                             int targetWidth, int targetHeight, double centerX, double centerY, double circleRadius) async {
+  /// 分類画像を保存（グループ別色分け + 中心点プロット + ガイド境界）
+  Future<void> _saveClassificationImage(img.Image originalImage, Map<String, List<List<Point>>> grainGroups, 
+                                      List<img.Color> groupColors, List<Point> grainCenters, String originalPath, 
+                                      double centerX, double centerY, double guideRadius) async {
     try {
       final classificationImage = img.Image.from(originalImage);
       
@@ -666,14 +653,14 @@ class ImageProcessorService {
         }
       }
       
-      // 円形範囲外をグレーに
+      // ガイド範囲外をグレーに
       for (int y = 0; y < classificationImage.height; y++) {
         for (int x = 0; x < classificationImage.width; x++) {
           final distanceFromCenter = math.sqrt(
             math.pow(x - centerX, 2) + math.pow(y - centerY, 2)
           );
           
-          if (distanceFromCenter > circleRadius) {
+          if (distanceFromCenter > guideRadius) {
             classificationImage.setPixel(x, y, img.ColorRgb8(64, 64, 64));
           }
         }
@@ -708,11 +695,8 @@ class ImageProcessorService {
       // 各米粒の境界線を白で描画
       _drawGrainBoundaries(classificationImage, grainGroups);
       
-      // 円形境界線を描画
-      _drawCircleBoundary(classificationImage, centerX, centerY, circleRadius);
-      
-      // 元画像サイズに拡大
-      final resizedClassificationImage = img.copyResize(classificationImage, width: targetWidth, height: targetHeight);
+      // ガイド境界線を描画
+      _drawGuideBoundary(classificationImage, centerX, centerY, guideRadius);
       
       final directory = await getApplicationDocumentsDirectory();
       final debugDir = Directory('${directory.path}/debug_images');
@@ -723,12 +707,12 @@ class ImageProcessorService {
       final fileName = 'classification_${DateTime.now().millisecondsSinceEpoch}.png';
       final classificationPath = '${debugDir.path}/$fileName';
       
-      final pngBytes = img.encodePng(resizedClassificationImage);
+      final pngBytes = img.encodePng(classificationImage);
       await File(classificationPath).writeAsBytes(pngBytes);
       
-      print('分類画像を保存 (${targetWidth}x${targetHeight}): $classificationPath');
+      print('分類画像を保存: $classificationPath');
       print('中心点${grainCenters.length}個をプロット');
-      print('円形境界線を描画 (中心: ${centerX.toStringAsFixed(1)}, ${centerY.toStringAsFixed(1)}, 半径: ${circleRadius.toStringAsFixed(1)})');
+      print('ガイド境界線を描画 (中心: ${centerX.toStringAsFixed(1)}, ${centerY.toStringAsFixed(1)}, 半径: ${guideRadius.toStringAsFixed(1)})');
     } catch (e) {
       print('分類画像保存エラー: $e');
     }
@@ -793,27 +777,6 @@ class ImageProcessorService {
       sumY += point.y;
     }
     return Point((sumX / grain.length).round(), (sumY / grain.length).round());
-  }
-
-  /// 重心からの距離を計算
-  double _calculateDistanceFromCenter(Point point, Point center) {
-    return math.sqrt(math.pow(point.x - center.x, 2) + math.pow(point.y - center.y, 2));
-  }
-
-  /// 重心からの最大距離を計算
-  double _calculateMaxDistance(List<Point> grain, double centerX, double centerY) {
-    var maxDistance = 0.0;
-    
-    for (final point in grain) {
-      final distance = math.sqrt(
-        math.pow(point.x - centerX, 2) + math.pow(point.y - centerY, 2)
-      );
-      if (distance > maxDistance) {
-        maxDistance = distance;
-      }
-    }
-    
-    return maxDistance;
   }
 
   /// 吸水率計算
