@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
-import 'package:vector_math/vector_math_64.dart' show Vector3;
 
 class ImageCropScreen extends StatefulWidget {
   final String imagePath;
@@ -15,16 +14,17 @@ class ImageCropScreen extends StatefulWidget {
 }
 
 class _ImageCropScreenState extends State<ImageCropScreen> {
-  final TransformationController _transformationController = TransformationController();
-
-  @override
-  void dispose() {
-    _transformationController.dispose();
-    super.dispose();
-  }
-
+  // 円形ガイドの状態
+  double _circleRadius = 150.0; // 初期半径
+  Offset _circleCenter = Offset(0, 0); // 初期位置（画面中央からの相対位置）
+  double _baseScale = 1.0; // スケール調整用のベース値
+  
   @override
   Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final screenCenterX = screenSize.width / 2;
+    final screenCenterY = screenSize.height / 2;
+    
     return Scaffold(
       appBar: AppBar(
         title: Text('範囲を調整'),
@@ -32,7 +32,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         foregroundColor: Colors.white,
         actions: [
           TextButton(
-            onPressed: _resetTransform,
+            onPressed: _resetCircle,
             child: Text(
               'リセット',
               style: TextStyle(color: Colors.white),
@@ -49,68 +49,92 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       ),
       body: Stack(
         children: [
-          // 背景を黒に
-          Container(
-            color: Colors.black,
-            width: double.infinity,
-            height: double.infinity,
+          // 背景画像
+          Positioned.fill(
+            child: Image.file(
+              File(widget.imagePath),
+              fit: BoxFit.contain,
+            ),
           ),
           
-          // ズーム・パン可能な画像
+          // 調整可能な円形ガイド
           Positioned.fill(
-            child: InteractiveViewer(
-              transformationController: _transformationController,
-              panEnabled: true,
-              scaleEnabled: true,
-              minScale: 0.5,
-              maxScale: 5.0,
-              child: Center(
-                child: Image.file(
-                  File(widget.imagePath),
-                  fit: BoxFit.contain,
+            child: GestureDetector(
+              onScaleStart: (details) {
+                // スケール開始時にベース値をリセット
+                _baseScale = 1.0;
+              },
+              onScaleUpdate: (details) {
+                setState(() {
+                  // 移動処理（1本指でも動作）
+                  _circleCenter = Offset(
+                    _circleCenter.dx + details.focalPointDelta.dx,
+                    _circleCenter.dy + details.focalPointDelta.dy,
+                  );
+                  
+                  // 拡大縮小処理（感度を下げて安定化）
+                  if (details.scale != 1.0) {
+                    final scaleDelta = details.scale - _baseScale;
+                    final newRadius = _circleRadius + (scaleDelta * 50); // 感度を調整
+                    _circleRadius = newRadius.clamp(50.0, 300.0);
+                    _baseScale = details.scale;
+                  }
+                });
+              },
+              child: CustomPaint(
+                painter: CircleGuidePainter(
+                  center: Offset(screenCenterX + _circleCenter.dx, screenCenterY + _circleCenter.dy),
+                  radius: _circleRadius,
                 ),
               ),
             ),
           ),
           
-          // 円形ガイド（オーバーレイ）
-          Positioned.fill(
-            child: IgnorePointer(
-              child: OverflowBox(
-                maxWidth: double.infinity,
-                maxHeight: double.infinity,
-                child: Center(
-                  child: Container(
-                    width: 500,
-                    height: 500,
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Colors.red,
-                        width: 5,
+          // サイズ調整ボタン
+          Positioned(
+            right: 20,
+            top: 200,
+            child: Column(
+              children: [
+                FloatingActionButton(
+                  mini: true,
+                  onPressed: () {
+                    setState(() {
+                      _circleRadius = (_circleRadius + 20).clamp(50.0, 300.0);
+                    });
+                  },
+                  child: Icon(Icons.add),
+                  backgroundColor: Colors.blue[800],
+                  foregroundColor: Colors.white,
+                ),
+                SizedBox(height: 8),
+                Text(
+                  '${_circleRadius.round()}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    shadows: [
+                      Shadow(
+                        blurRadius: 5.0,
+                        color: Colors.black,
+                        offset: Offset(1.0, 1.0),
                       ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text(
-                        '解析範囲',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          shadows: [
-                            Shadow(
-                              blurRadius: 15.0,
-                              color: Colors.black,
-                              offset: Offset(2.0, 2.0),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    ],
                   ),
                 ),
-              ),
+                SizedBox(height: 8),
+                FloatingActionButton(
+                  mini: true,
+                  onPressed: () {
+                    setState(() {
+                      _circleRadius = (_circleRadius - 20).clamp(50.0, 300.0);
+                    });
+                  },
+                  child: Icon(Icons.remove),
+                  backgroundColor: Colors.blue[800],
+                  foregroundColor: Colors.white,
+                ),
+              ],
             ),
           ),
           
@@ -140,13 +164,13 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _buildInstructionItem(Icons.pinch_outlined, 'ピンチでズーム'),
-                      _buildInstructionItem(Icons.pan_tool_outlined, 'ドラッグで移動'),
+                      _buildInstructionItem(Icons.touch_app, 'ドラッグで移動'),
+                      _buildInstructionItem(Icons.pinch_outlined, 'ピンチで拡大縮小'),
                     ],
                   ),
                   SizedBox(height: 8),
                   Text(
-                    '赤い円内の米粒が解析対象になります',
+                    '円内の範囲が解析対象になります',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 14,
@@ -175,21 +199,18 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     );
   }
 
-  void _resetTransform() {
-    _transformationController.value = Matrix4.identity();
+  void _resetCircle() {
+    setState(() {
+      _circleRadius = 150.0;
+      _circleCenter = Offset(0, 0);
+    });
   }
 
   void _confirmCrop() async {
     try {
-      // 変換情報を取得
-      final matrix = _transformationController.value;
-      
-      print('=== 変換行列デバッグ ===');
-      print('変換行列: $matrix');
-      print('変換行列の各成分:');
-      print('  平行移動X: ${matrix.getTranslation().x}');
-      print('  平行移動Y: ${matrix.getTranslation().y}');
-      print('  スケール: ${matrix.getMaxScaleOnAxis()}');
+      print('=== 円形切り取り開始 ===');
+      print('円の中心相対位置: ${_circleCenter}');
+      print('円の半径: ${_circleRadius}');
       
       // 元画像を読み込み
       final bytes = await File(widget.imagePath).readAsBytes();
@@ -200,104 +221,79 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
       }
       
       // 円形範囲を切り取った画像を作成
-      final croppedImagePath = await _cropCircularArea(originalImage, matrix);
+      final croppedImagePath = await _cropCircularArea(originalImage);
       
       // 切り取った画像のパスを返す
       Navigator.pop(context, croppedImagePath);
     } catch (e) {
       print('円形切り取りエラー: $e');
-      // エラー時は元画像を返す
       Navigator.pop(context, widget.imagePath);
     }
   }
   
-  /// 円形範囲を切り取った画像を作成
- /// 円形範囲を切り取った画像を作成
-  /// 円形範囲を切り取った画像を作成
-  Future<String> _cropCircularArea(img.Image originalImage, Matrix4 transform) async {
-    final width = originalImage.width;
-    final height = originalImage.height;
-    
-    // ガイドの円形範囲（画面上での固定値）
-    const guideRadius = 250.0;
+  Future<String> _cropCircularArea(img.Image originalImage) async {
     final screenSize = MediaQuery.of(context).size;
-    final screenCenterX = screenSize.width / 2;
-    final screenCenterY = screenSize.height / 2;
+    final appBarHeight = AppBar().preferredSize.height + MediaQuery.of(context).padding.top;
+    final availableHeight = screenSize.height - appBarHeight;
     
-    print('=== 切り取り処理開始 ===');
-    print('元画像サイズ: ${width}x${height}');
+    final imageWidth = originalImage.width;
+    final imageHeight = originalImage.height;
+    
+    print('=== 切り取り計算開始 ===');
+    print('元画像サイズ: ${imageWidth}x${imageHeight}');
     print('画面サイズ: ${screenSize.width}x${screenSize.height}');
-    print('画面中心（ガイド中心）: (${screenCenterX}, ${screenCenterY})');
-    print('ガイド半径: ${guideRadius}');
+    print('AppBar高さ: ${appBarHeight}');
+    print('利用可能高さ: ${availableHeight}');
     
-    // InteractiveViewerの変換を正しく解釈
-    final scaleX = transform.getMaxScaleOnAxis();
-    final translation = transform.getTranslation();
-    
-    print('=== 変換情報 ===');
-    print('スケール: ${scaleX}');
-    print('平行移動: (${translation.x}, ${translation.y})');
-    
-    // 画像の表示サイズを計算（fit: BoxFit.contain）
-    final imageAspectRatio = width / height;
-    final screenAspectRatio = screenSize.width / screenSize.height;
+    // 画像の表示サイズを計算（BoxFit.contain）
+    final imageAspectRatio = imageWidth / imageHeight;
+    final availableAspectRatio = screenSize.width / availableHeight;
     
     double displayWidth, displayHeight;
-    if (imageAspectRatio > screenAspectRatio) {
-      // 画像が横長 → 幅を画面幅に合わせる
+    if (imageAspectRatio > availableAspectRatio) {
       displayWidth = screenSize.width;
       displayHeight = screenSize.width / imageAspectRatio;
     } else {
-      // 画像が縦長 → 高さを画面高さに合わせる
-      displayHeight = screenSize.height;
-      displayWidth = screenSize.height * imageAspectRatio;
+      displayHeight = availableHeight;
+      displayWidth = availableHeight * imageAspectRatio;
     }
     
-    print('=== 画像表示サイズ（変換前） ===');
-    print('表示サイズ: ${displayWidth}x${displayHeight}');
-    print('画像アスペクト比: ${imageAspectRatio}');
-    print('画面アスペクト比: ${screenAspectRatio}');
+    print('画像表示サイズ: ${displayWidth}x${displayHeight}');
     
-    // 変換なしの場合の画像中心位置（画面の中央）
-    final originalImageCenterX = screenSize.width / 2;
-    final originalImageCenterY = screenSize.height / 2;
+    // 画面上の円の中心位置
+    final screenCenterX = screenSize.width / 2;
+    final screenCenterY = screenSize.height / 2;
+    final circleCenterX = screenCenterX + _circleCenter.dx;
+    final circleCenterY = screenCenterY + _circleCenter.dy;
     
-    // 変換後の画像中心位置
-    final transformedImageCenterX = originalImageCenterX + translation.x;
-    final transformedImageCenterY = originalImageCenterY + translation.y;
+    print('画面上の円の中心: (${circleCenterX}, ${circleCenterY})');
+    print('円の半径: ${_circleRadius}');
     
-    print('=== 変換後の画像中心 ===');
-    print('変換後表示サイズ: ${displayWidth * scaleX}x${displayHeight * scaleX}');
-    print('変換後画像中心: (${transformedImageCenterX}, ${transformedImageCenterY})');
+    // 表示画像の左上位置を計算（AppBarを考慮）
+    final displayLeft = (screenSize.width - displayWidth) / 2;
+    final displayTop = appBarHeight + (availableHeight - displayHeight) / 2;
     
-    // ガイド中心から変換後画像中心への相対位置（画面座標系）
-final relativeX = transformedImageCenterX - screenCenterX;
-final relativeY = transformedImageCenterY - screenCenterY;
+    print('表示画像の位置: left=${displayLeft}, top=${displayTop}');
     
-    print('=== 相対位置 ===');
-    print('ガイド中心からの相対位置: (${relativeX}, ${relativeY})');
+    // 円の中心を画像座標系に変換
+    final imageRelativeX = (circleCenterX - displayLeft) / displayWidth;
+    final imageRelativeY = (circleCenterY - displayTop) / displayHeight;
     
-    // 画面座標系から画像座標系への変換（変換行列を考慮）
-final imageRelativeX = (relativeX / displayWidth) * width;
-final imageRelativeY = (relativeY / displayHeight) * height;
+    final imageCenterX = imageRelativeX * imageWidth;
+    final imageCenterY = imageRelativeY * imageHeight;
     
-    // 元画像上でのガイド中心位置
-    final imageCenterX = width / 2 + imageRelativeX;
-    final imageCenterY = height / 2 + imageRelativeY;
+    // 円の半径を画像座標系に変換
+    final imageRadius = (_circleRadius / displayWidth) * imageWidth;
     
-    // ガイド半径を元画像座標系に変換（X軸基準で統一）
-    final imageRadius = (guideRadius / (displayWidth * scaleX)) * width;
-    
-    print('=== 元画像座標系での位置 ===');
-    print('画像相対位置: (${imageRelativeX}, ${imageRelativeY})');
-    print('画像上の中心: (${imageCenterX}, ${imageCenterY})');
-    print('画像上の半径: ${imageRadius}');
+    print('=== 画像座標系での円 ===');
+    print('画像上の円の中心: (${imageCenterX}, ${imageCenterY})');
+    print('画像上の円の半径: ${imageRadius}');
     
     // 切り取り範囲を計算
-    final cropLeft = (imageCenterX - imageRadius).round().clamp(0, width);
-    final cropTop = (imageCenterY - imageRadius).round().clamp(0, height);
-    final cropRight = (imageCenterX + imageRadius).round().clamp(0, width);
-    final cropBottom = (imageCenterY + imageRadius).round().clamp(0, height);
+    final cropLeft = (imageCenterX - imageRadius).round().clamp(0, imageWidth);
+    final cropTop = (imageCenterY - imageRadius).round().clamp(0, imageHeight);
+    final cropRight = (imageCenterX + imageRadius).round().clamp(0, imageWidth);
+    final cropBottom = (imageCenterY + imageRadius).round().clamp(0, imageHeight);
     
     final cropWidth = cropRight - cropLeft;
     final cropHeight = cropBottom - cropTop;
@@ -306,9 +302,7 @@ final imageRelativeY = (relativeY / displayHeight) * height;
     print('left=${cropLeft}, top=${cropTop}, right=${cropRight}, bottom=${cropBottom}');
     print('width=${cropWidth}, height=${cropHeight}');
     
-    // 切り取り範囲が有効かチェック
     if (cropWidth <= 0 || cropHeight <= 0) {
-      print('エラー: 切り取り範囲が無効です');
       throw Exception('Invalid crop area');
     }
     
@@ -321,14 +315,12 @@ final imageRelativeY = (relativeY / displayHeight) * height;
       height: cropHeight,
     );
     
-    print('切り取り完了: ${croppedImage.width}x${croppedImage.height}');
-    
-    // 正方形にリサイズ（長辺に合わせる、サイズを大幅に制限）
-    final targetSize = math.min(math.max(cropWidth, cropHeight), 512); // 最大512pxに制限
+    // 正方形にリサイズ
+    final targetSize = math.max(cropWidth, cropHeight).clamp(200, 800);
     final squareImage = img.copyResize(croppedImage, width: targetSize, height: targetSize);
     
     // 円形マスクを適用
-    final circularImage = _applyCircularMask(squareImage);
+    final circularImage = _applyCircularMask(squareImage, imageCenterX - cropLeft, imageCenterY - cropTop, imageRadius);
     
     // 一時ファイルに保存
     final directory = await getTemporaryDirectory();
@@ -345,23 +337,23 @@ final imageRelativeY = (relativeY / displayHeight) * height;
     return filePath;
   }
   
-  /// 円形マスクを適用
-  img.Image _applyCircularMask(img.Image image) {
+  img.Image _applyCircularMask(img.Image image, double centerX, double centerY, double radius) {
     final width = image.width;
     final height = image.height;
-    final centerX = width / 2;
-    final centerY = height / 2;
-    final radius = math.min(width, height) / 2;
-    
     final maskedImage = img.Image.from(image);
+    
+    // 切り取り後の画像での円の中心位置を再計算
+    final circleCenterX = width / 2;
+    final circleCenterY = height / 2;
+    final circleRadius = math.min(width, height) / 2;
     
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
         final distance = math.sqrt(
-          math.pow(x - centerX, 2) + math.pow(y - centerY, 2)
+          math.pow(x - circleCenterX, 2) + math.pow(y - circleCenterY, 2)
         );
         
-        if (distance > radius) {
+        if (distance > circleRadius) {
           // 円形範囲外は透明にする
           maskedImage.setPixel(x, y, img.ColorRgba8(0, 0, 0, 0));
         }
@@ -370,4 +362,32 @@ final imageRelativeY = (relativeY / displayHeight) * height;
     
     return maskedImage;
   }
+}
+
+class CircleGuidePainter extends CustomPainter {
+  final Offset center;
+  final double radius;
+  
+  CircleGuidePainter({required this.center, required this.radius});
+  
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.red
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0;
+    
+    // 円形ガイドを描画
+    canvas.drawCircle(center, radius, paint);
+    
+    // 中心点を描画
+    final centerPaint = Paint()
+      ..color = Colors.red
+      ..style = PaintingStyle.fill;
+    
+    canvas.drawCircle(center, 5.0, centerPaint);
+  }
+  
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
