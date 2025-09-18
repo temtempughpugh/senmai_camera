@@ -59,7 +59,6 @@ class ImageProcessorService {
   }
 
   /// ガイドに準拠した画像解析処理
-  /// ガイドに準拠した画像解析処理
   Future<Map<String, dynamic>> _performGuideBasedAnalysis(img.Image image, String originalPath) async {
     final width = image.width;
     final height = image.height;
@@ -573,12 +572,12 @@ class ImageProcessorService {
       bool isAbsorbed = false;
       
       // 明度差のみで一律判定
-      if (range > 20) {
+      if (range > 55) {
         // 明度差がある場合：上位80%を吸水と判定
         isAbsorbed = brightness >= top80Threshold;
-      } else if (range <= 10) {
-        // 明度が均一な場合：中央値+5で判定
-        isAbsorbed = brightness >= median + 5;
+      } else if (range <= 55) {
+        // 明度が均一な場合：全部吸水
+        isAbsorbed = true;
       } else {
         // 中間の場合：上位80%基準を使用
         isAbsorbed = brightness >= top80Threshold;
@@ -590,7 +589,7 @@ class ImageProcessorService {
     return results;
   }
 
-  /// 黒グループ専用解析（45%が吸水になるよう調整）
+  /// 黒グループ専用解析（明度差による判定）
   List<Map<String, dynamic>> _analyzeGrainBlackGroup(img.Image image, List<Point> grain) {
     final results = <Map<String, dynamic>>[];
     
@@ -602,16 +601,27 @@ class ImageProcessorService {
     
     if (brightnesses.isEmpty) return results;
     
-    // 45%が吸水になるよう設定（上位45%）
+    // 統計値計算
     final top45Threshold = brightnesses[(brightnesses.length * 0.45).round()];
+    final maxBrightness = brightnesses.last;
+    final minBrightness = brightnesses.first;
+    final range = maxBrightness - minBrightness;
     
     // 各ピクセルを解析
     for (final point in grain) {
       final pixel = image.getPixel(point.x, point.y);
       final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
       
-      // 上位45%を吸水と判定
-      final isAbsorbed = brightness >= top45Threshold;
+      bool isAbsorbed = false;
+      
+      // 明度差による判定（黒グループ用）
+      if (range <= 55) {
+        // 明度差が85以下の場合：全部吸水
+        isAbsorbed = true;
+      } else {
+        // 明度差がある場合：上位45%を吸水と判定
+        isAbsorbed = brightness >= top45Threshold;
+      }
       
       results.add({'point': point, 'isAbsorbed': isAbsorbed});
     }
