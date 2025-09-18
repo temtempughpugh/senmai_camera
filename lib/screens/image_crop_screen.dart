@@ -271,8 +271,8 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     print('変換後画像中心: (${transformedImageCenterX}, ${transformedImageCenterY})');
     
     // ガイド中心から変換後画像中心への相対位置（画面座標系）
-    final relativeX = screenCenterX - transformedImageCenterX;
-    final relativeY = screenCenterY - transformedImageCenterY;
+final relativeX = transformedImageCenterX - screenCenterX;
+final relativeY = transformedImageCenterY - screenCenterY;
     
     print('=== 相対位置 ===');
     print('ガイド中心からの相対位置: (${relativeX}, ${relativeY})');
