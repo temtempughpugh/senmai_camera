@@ -164,22 +164,34 @@ class _ResultScreenState extends State<ResultScreen> {
               padding: EdgeInsets.all(16),
               child: Column(
                 children: [
-                  // 撮影画像とデバッグ画像を並べて表示
+                  // 予測吸水率（メイン表示）
+                  ResultDisplay(
+                    title: '予測吸水率',
+                    value: '${result.predictedRate.toStringAsFixed(1)}%',
+                    isMainResult: true,
+                  ),
+                  
+                  SizedBox(height: 16),
+                  
+                  // 3つの画像を表示（元画像、白濁判定、分類）
                   Row(
                     children: [
                       // 元画像
                       Expanded(
                         child: Column(
                           children: [
-                            Text('元画像', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('元画像', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                             SizedBox(height: 4),
-                            Container(
-                              height: 150,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(8),
-                                image: DecorationImage(
-                                  image: FileImage(File(widget.imagePath)),
-                                  fit: BoxFit.cover,
+                            GestureDetector(
+                              onTap: () => _showImageDialog(widget.imagePath, '元画像'),
+                              child: Container(
+                                height: 100,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  image: DecorationImage(
+                                    image: FileImage(File(widget.imagePath)),
+                                    fit: BoxFit.cover,
+                                  ),
                                 ),
                               ),
                             ),
@@ -187,13 +199,84 @@ class _ResultScreenState extends State<ResultScreen> {
                         ),
                       ),
                       SizedBox(width: 8),
-                      // デバッグ画像
+                      // 白濁判定画像
                       Expanded(
                         child: Column(
                           children: [
-                            Text('解析結果', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Text('白濁判定', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                             SizedBox(height: 4),
-                            _buildDebugImageWidget(),
+                            FutureBuilder<File?>(
+                              future: _findDebugImage(),
+                              builder: (context, snapshot) {
+                                if (snapshot.hasData && snapshot.data != null) {
+                                  return GestureDetector(
+                                    onTap: () => _showImageDialog(snapshot.data!.path, '白濁判定'),
+                                    child: Container(
+                                      height: 100,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        image: DecorationImage(
+                                          image: FileImage(snapshot.data!),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  return Container(
+                                    height: 100,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      color: Colors.grey[300],
+                                    ),
+                                    child: Center(
+                                      child: Text('解析中...', style: TextStyle(fontSize: 10)),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(width: 8),
+                      // 分類画像
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Text('分類表示', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                            SizedBox(height: 4),
+                            FutureBuilder<File?>(
+                              future: _findClassificationImage(),
+                              builder: (context, snapshot) {
+                                if (snapshot.hasData && snapshot.data != null) {
+                                  return GestureDetector(
+                                    onTap: () => _showImageDialog(snapshot.data!.path, '分類表示'),
+                                    child: Container(
+                                      height: 100,
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        image: DecorationImage(
+                                          image: FileImage(snapshot.data!),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  return Container(
+                                    height: 100,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      color: Colors.grey[300],
+                                    ),
+                                    child: Center(
+                                      child: Text('解析中...', style: TextStyle(fontSize: 10)),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
                           ],
                         ),
                       ),
@@ -203,22 +286,32 @@ class _ResultScreenState extends State<ResultScreen> {
                   SizedBox(height: 16),
                   
                   // 凡例
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  Column(
                     children: [
-                      _buildLegendItem('背景', Colors.green),
-                      _buildLegendItem('透明米', Colors.blue),
-                      _buildLegendItem('白濁米', Colors.red),
+                      Text('凡例', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildLegendItem('背景', Colors.green),
+                          _buildLegendItem('透明米', Colors.blue),
+                          _buildLegendItem('白濁米', Colors.red),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Text('分類グループ', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          _buildLegendItem('最明', Colors.white),
+                          _buildLegendItem('明', Colors.yellow),
+                          _buildLegendItem('中', Colors.green),
+                          _buildLegendItem('暗', Colors.purple),
+                          _buildLegendItem('最暗', Colors.black),
+                        ],
+                      ),
                     ],
-                  ),
-                  
-                  SizedBox(height: 16),
-                  
-                  // 予測吸水率（メイン表示）
-                  ResultDisplay(
-                    title: '予測吸水率',
-                    value: '${result.predictedRate.toStringAsFixed(1)}%',
-                    isMainResult: true,
                   ),
                 ],
               ),
@@ -429,8 +522,6 @@ class _ResultScreenState extends State<ResultScreen> {
     print('  有効な実測値: $hasValidActualValue');
     
     return _currentResult != null && hasValidActualValue;
-    
-    // 品種と精米歩合は必須ではなく、あとで設定可能にする
   }
 
   void _saveData() async {
@@ -448,12 +539,14 @@ class _ResultScreenState extends State<ResultScreen> {
     }
     
     // 精米歩合をユーザー履歴に追加
-    await DatabaseService.instance.insertPolishingRatio(_selectedPolishingRatio!);
+    if (_selectedPolishingRatio != null) {
+      await DatabaseService.instance.insertPolishingRatio(_selectedPolishingRatio!);
+    }
     
     // 解析結果を更新
     final updatedResult = _currentResult!.copyWith(
       actualRate: actualRate,
-      riceVariety: _selectedVariety!.name,
+      riceVariety: _selectedVariety?.name,
       polishingRatio: _selectedPolishingRatio,
     );
     
@@ -473,44 +566,6 @@ class _ResultScreenState extends State<ResultScreen> {
     Navigator.pop(context);
   }
 
-  Widget _buildDebugImageWidget() {
-    return FutureBuilder<File?>(
-      future: _findDebugImage(),
-      builder: (context, snapshot) {
-        if (snapshot.hasData && snapshot.data != null) {
-          return Container(
-            height: 150,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              image: DecorationImage(
-                image: FileImage(snapshot.data!),
-                fit: BoxFit.cover,
-              ),
-            ),
-          );
-        } else {
-          return Container(
-            height: 150,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              color: Colors.grey[300],
-            ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.image, color: Colors.grey[600]),
-                  SizedBox(height: 4),
-                  Text('解析中...', style: TextStyle(color: Colors.grey[600])),
-                ],
-              ),
-            ),
-          );
-        }
-      },
-    );
-  }
-
   Widget _buildLegendItem(String label, Color color) {
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -521,11 +576,48 @@ class _ResultScreenState extends State<ResultScreen> {
           decoration: BoxDecoration(
             color: color,
             shape: BoxShape.circle,
+            border: color == Colors.white ? Border.all(color: Colors.grey) : null,
           ),
         ),
         SizedBox(width: 4),
         Text(label, style: TextStyle(fontSize: 10)),
       ],
+    );
+  }
+
+  // 画像拡大表示ダイアログ
+  void _showImageDialog(String imagePath, String title) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppBar(
+              title: Text(title),
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+              leading: IconButton(
+                icon: Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            Expanded(
+              child: InteractiveViewer(
+                panEnabled: true,
+                boundaryMargin: EdgeInsets.all(20),
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.file(
+                  File(imagePath),
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -536,18 +628,46 @@ class _ResultScreenState extends State<ResultScreen> {
       
       if (await debugDir.exists()) {
         final files = debugDir.listSync()
-          .where((file) => file.path.endsWith('.png'))
+          .where((file) => file.path.contains('debug_') && 
+                          !file.path.contains('classification_') && 
+                          file.path.endsWith('.png'))
           .cast<File>()
           .toList();
         
         if (files.isNotEmpty) {
           // 最新のデバッグ画像を取得
           files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+          print('デバッグ画像を取得: ${files.first.path}');
           return files.first;
         }
       }
     } catch (e) {
       print('デバッグ画像取得エラー: $e');
+    }
+    return null;
+  }
+
+  Future<File?> _findClassificationImage() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final debugDir = Directory('${directory.path}/debug_images');
+      
+      if (await debugDir.exists()) {
+        final files = debugDir.listSync()
+          .where((file) => file.path.contains('classification_') && 
+                          file.path.endsWith('.png'))
+          .cast<File>()
+          .toList();
+        
+        if (files.isNotEmpty) {
+          // 最新の分類画像を取得
+          files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+          print('分類画像を取得: ${files.first.path}');
+          return files.first;
+        }
+      }
+    } catch (e) {
+      print('分類画像取得エラー: $e');
     }
     return null;
   }
