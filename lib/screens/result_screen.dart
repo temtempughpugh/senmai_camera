@@ -173,115 +173,8 @@ class _ResultScreenState extends State<ResultScreen> {
                   
                   SizedBox(height: 16),
                   
-                  // 3つの画像を表示（元画像、白濁判定、分類）
-                  Row(
-                    children: [
-                      // 元画像
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Text('元画像', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                            SizedBox(height: 4),
-                            GestureDetector(
-                              onTap: () => _showImageDialog(widget.imagePath, '元画像'),
-                              child: Container(
-                                height: 100,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(8),
-                                  image: DecorationImage(
-                                    image: FileImage(File(widget.imagePath)),
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      // 白濁判定画像
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Text('白濁判定', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                            SizedBox(height: 4),
-                            FutureBuilder<File?>(
-                              future: _findDebugImage(),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasData && snapshot.data != null) {
-                                  return GestureDetector(
-                                    onTap: () => _showImageDialog(snapshot.data!.path, '白濁判定'),
-                                    child: Container(
-                                      height: 100,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        image: DecorationImage(
-                                          image: FileImage(snapshot.data!),
-                                          fit: BoxFit.cover,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                } else {
-                                  return Container(
-                                    height: 100,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      color: Colors.grey[300],
-                                    ),
-                                    child: Center(
-                                      child: Text('解析中...', style: TextStyle(fontSize: 10)),
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      // 分類画像
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Text('分類表示', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                            SizedBox(height: 4),
-                            FutureBuilder<File?>(
-                              future: _findClassificationImage(),
-                              builder: (context, snapshot) {
-                                if (snapshot.hasData && snapshot.data != null) {
-                                  return GestureDetector(
-                                    onTap: () => _showImageDialog(snapshot.data!.path, '分類表示'),
-                                    child: Container(
-                                      height: 100,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        image: DecorationImage(
-                                          image: FileImage(snapshot.data!),
-                                          fit: BoxFit.cover,
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                } else {
-                                  return Container(
-                                    height: 100,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      color: Colors.grey[300],
-                                    ),
-                                    child: Center(
-                                      child: Text('解析中...', style: TextStyle(fontSize: 10)),
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                  // 3つの画像を同じサイズで表示
+                  _buildImageGallery(),
                   
                   SizedBox(height: 16),
                   
@@ -437,6 +330,101 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
+  Widget _buildImageGallery() {
+    return FutureBuilder<List<ImageData>>(
+      future: _getImageData(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return Container(
+            height: 150,
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final images = snapshot.data!;
+        
+        return Column(
+          children: [
+            // 3つの画像を同じサイズで表示
+            Row(
+              children: images.map((imageData) => Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4),
+                  child: Column(
+                    children: [
+                      Text(
+                        imageData.title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12
+                        ),
+                      ),
+                      SizedBox(height: 4),
+                      GestureDetector(
+                        onTap: () => _showImageGalleryDialog(images, images.indexOf(imageData)),
+                        child: Container(
+                          height: 120,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.grey[300],
+                          ),
+                          child: imageData.file != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    imageData.file!,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                  ),
+                                )
+                              : Center(
+                                  child: Text(
+                                    '解析中...',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )).toList(),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<List<ImageData>> _getImageData() async {
+    // 元画像は元のサイズのまま
+    final originalImage = File(widget.imagePath).existsSync() 
+        ? File(widget.imagePath) 
+        : null;
+    
+    // 解析画像は元画像サイズに引き延ばし
+    final debugImage = await _findDebugImage();
+    final classificationImage = await _findClassificationImage();
+    
+    return [
+      ImageData(title: '元画像', file: originalImage),
+      ImageData(title: '白濁判定', file: debugImage),
+      ImageData(title: '分類表示', file: classificationImage),
+    ];
+  }
+
+  void _showImageGalleryDialog(List<ImageData> images, int initialIndex) {
+    showDialog(
+      context: context,
+      builder: (context) => ImageGalleryDialog(
+        images: images,
+        initialIndex: initialIndex,
+      ),
+    );
+  }
+
   Widget _buildDataRow(String label, String value) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 4),
@@ -585,42 +573,6 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  // 画像拡大表示ダイアログ
-  void _showImageDialog(String imagePath, String title) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppBar(
-              title: Text(title),
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
-              leading: IconButton(
-                icon: Icon(Icons.close),
-                onPressed: () => Navigator.pop(context),
-              ),
-            ),
-            Expanded(
-              child: InteractiveViewer(
-                panEnabled: true,
-                boundaryMargin: EdgeInsets.all(20),
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: Image.file(
-                  File(imagePath),
-                  fit: BoxFit.contain,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<File?> _findDebugImage() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
@@ -635,7 +587,6 @@ class _ResultScreenState extends State<ResultScreen> {
           .toList();
         
         if (files.isNotEmpty) {
-          // 最新のデバッグ画像を取得
           files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
           print('デバッグ画像を取得: ${files.first.path}');
           return files.first;
@@ -660,7 +611,6 @@ class _ResultScreenState extends State<ResultScreen> {
           .toList();
         
         if (files.isNotEmpty) {
-          // 最新の分類画像を取得
           files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
           print('分類画像を取得: ${files.first.path}');
           return files.first;
@@ -674,5 +624,155 @@ class _ResultScreenState extends State<ResultScreen> {
 
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.year}/${dateTime.month}/${dateTime.day} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+}
+
+class ImageData {
+  final String title;
+  final File? file;
+  
+  ImageData({required this.title, this.file});
+}
+
+class ImageGalleryDialog extends StatefulWidget {
+  final List<ImageData> images;
+  final int initialIndex;
+  
+  const ImageGalleryDialog({
+    Key? key,
+    required this.images,
+    required this.initialIndex,
+  }) : super(key: key);
+  
+  @override
+  _ImageGalleryDialogState createState() => _ImageGalleryDialogState();
+}
+
+class _ImageGalleryDialogState extends State<ImageGalleryDialog> {
+  late PageController _pageController;
+  late int _currentIndex;
+  
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+  
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: EdgeInsets.zero,
+      child: Stack(
+        children: [
+          // 画像表示エリア
+          PageView.builder(
+            controller: _pageController,
+            onPageChanged: (index) {
+              setState(() {
+                _currentIndex = index;
+              });
+            },
+            itemCount: widget.images.length,
+            itemBuilder: (context, index) {
+              final imageData = widget.images[index];
+              return Container(
+                width: double.infinity,
+                height: double.infinity,
+                child: imageData.file != null
+                    ? InteractiveViewer(
+                        panEnabled: true,
+                        boundaryMargin: EdgeInsets.all(20),
+                        minScale: 0.5,
+                        maxScale: 4.0,
+                        child: Image.file(
+                          imageData.file!,
+                          fit: BoxFit.contain,
+                        ),
+                      )
+                    : Center(
+                        child: Text(
+                          '画像を読み込めません',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      ),
+              );
+            },
+          ),
+          
+          // 上部のタイトルバー
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.7),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.close, color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    Expanded(
+                      child: Text(
+                        widget.images[_currentIndex].title,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    SizedBox(width: 48), // アイコンボタンのサイズ分のスペース
+                  ],
+                ),
+              ),
+            ),
+          ),
+          
+          // 下部のページインジケーター
+          Positioned(
+            bottom: 50,
+            left: 0,
+            right: 0,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: widget.images.asMap().entries.map((entry) {
+                return Container(
+                  width: 8,
+                  height: 8,
+                  margin: EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentIndex == entry.key
+                        ? Colors.white
+                        : Colors.white.withOpacity(0.4),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

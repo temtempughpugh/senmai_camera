@@ -37,7 +37,7 @@ class ImageProcessorService {
         throw Exception('画像の読み込みに失敗しました');
       }
 
-      // 処理しやすいサイズに調整
+      // 処理しやすいサイズに調整（512x512の正方形に統一）
       final resizedImage = img.copyResize(image, width: 512, height: 512);
       
       // 実際の画像解析を実行
@@ -63,6 +63,12 @@ class ImageProcessorService {
 
   /// 実際の画像解析処理（米粒分離→グループ分け→勾配解析版）
   Future<Map<String, dynamic>> _performRealImageAnalysis(img.Image image, String originalPath) async {
+    // 元画像のサイズを保存
+    final originalBytes = await File(originalPath).readAsBytes();
+    final originalImage = img.decodeImage(originalBytes);
+    final originalWidth = originalImage?.width ?? image.width;
+    final originalHeight = originalImage?.height ?? image.height;
+    
     final width = image.width;
     final height = image.height;
     
@@ -177,11 +183,11 @@ class ImageProcessorService {
       }
     }
     
-    // メイン解析画像を保存（白濁判定結果）
-    await _saveDebugImage(debugImage, originalPath);
+    // メイン解析画像を保存（白濁判定結果）- 元画像サイズに拡大
+    await _saveDebugImageResized(debugImage, originalPath, originalWidth, originalHeight);
     
-    // 分類画像を保存（グループ別色分け）
-    await _saveClassificationImage(image, grainGroups, groupColors, originalPath);
+    // 分類画像を保存（グループ別色分け）- 元画像サイズに拡大
+    await _saveClassificationImageResized(image, grainGroups, groupColors, originalPath, originalWidth, originalHeight);
     
     // 統計計算
     final avgBrightness = ricePixelCount > 0 ? totalBrightness / ricePixelCount : 0.0;
@@ -436,7 +442,7 @@ class ImageProcessorService {
     return _analyzeGrainRelative(image, grain);
   }
 
-  /// 相対判定による米粒解析（全グループ統一）
+  /// 相対判定による米粒解析（縁の影を考慮）
   List<Map<String, dynamic>> _analyzeGrainRelative(img.Image image, List<Point> grain) {
     final results = <Map<String, dynamic>>[];
     
@@ -448,27 +454,50 @@ class ImageProcessorService {
     
     if (brightnesses.isEmpty) return results;
     
-    // 統計値計算（より多くを白濁判定するよう調整）
+    // 重心を計算（縁判定に使用）
+    final centroid = _calculateCentroid(grain);
+    
+    // 統計値計算
     final median = brightnesses[brightnesses.length ~/ 2];
-    final top50Threshold = brightnesses[(brightnesses.length * 0.5).round()];  // 30% → 50%に変更
+    final top60Threshold = brightnesses[(brightnesses.length * 0.6).round()];
     final maxBrightness = brightnesses.last;
     final minBrightness = brightnesses.first;
     final range = maxBrightness - minBrightness;
     
-    // 各ピクセルを相対判定
+    // 米粒の最大半径を計算
+    final maxRadius = _calculateMaxDistance(grain, centroid.x.toDouble(), centroid.y.toDouble());
+    
+    // 各ピクセルを解析
     for (final point in grain) {
       final pixel = image.getPixel(point.x, point.y);
       final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
       
+      // 重心からの距離を計算
+      final distanceFromCenter = _calculateDistanceFromCenter(point, centroid);
+      final distanceRatio = maxRadius > 0 ? distanceFromCenter / maxRadius : 0.0;
+      
       bool isAbsorbed = false;
       
-      // 相対判定ロジック（より寛容に調整）
-      if (range > 20) {  // 30 → 20に変更（より敏感に）
-        // 明度差がある場合：上位50%を吸水と判定（より多く判定）
-        isAbsorbed = brightness >= top50Threshold;
+      // 縁の影を考慮した判定
+      if (distanceRatio > 0.7) {
+        // 縁に近い部分（70%以上）：影の影響を考慮して基準を緩める
+        if (range > 15) {
+          // 明度差がある場合：上位70%を吸水と判定（縁は甘く）
+          final top70Threshold = brightnesses[(brightnesses.length * 0.7).round()];
+          isAbsorbed = brightness >= top70Threshold;
+        } else {
+          // 明度が均一な場合：中央値ベースで判定
+          isAbsorbed = brightness >= median;
+        }
       } else {
-        // 明度が均一な場合：中央値+閾値で判定（閾値を下げる）
-        isAbsorbed = brightness >= median + 5;  // 10 → 5に変更
+        // 中心部分：通常の判定
+        if (range > 20) {
+          // 明度差がある場合：上位60%を吸水と判定
+          isAbsorbed = brightness >= top60Threshold;
+        } else {
+          // 明度が均一な場合：中央値+閾値で判定
+          isAbsorbed = brightness >= median + 5;
+        }
       }
       
       results.add({'point': point, 'isAbsorbed': isAbsorbed});
@@ -477,25 +506,33 @@ class ImageProcessorService {
     return results;
   }
 
-  /// 重心を計算
-  Point _calculateCentroid(List<Point> grain) {
-    var sumX = 0.0;
-    var sumY = 0.0;
-    for (final point in grain) {
-      sumX += point.x;
-      sumY += point.y;
+  /// デバッグ画像を元画像サイズに拡大して保存
+  Future<void> _saveDebugImageResized(img.Image debugImage, String originalPath, int targetWidth, int targetHeight) async {
+    try {
+      // 512x512の解析画像を元画像サイズに拡大
+      final resizedDebugImage = img.copyResize(debugImage, width: targetWidth, height: targetHeight);
+      
+      final directory = await getApplicationDocumentsDirectory();
+      final debugDir = Directory('${directory.path}/debug_images');
+      if (!await debugDir.exists()) {
+        await debugDir.create(recursive: true);
+      }
+      
+      final fileName = 'debug_${DateTime.now().millisecondsSinceEpoch}.png';
+      final debugPath = '${debugDir.path}/$fileName';
+      
+      final pngBytes = img.encodePng(resizedDebugImage);
+      await File(debugPath).writeAsBytes(pngBytes);
+      
+      print('デバッグ画像を保存 (${targetWidth}x${targetHeight}): $debugPath');
+    } catch (e) {
+      print('デバッグ画像保存エラー: $e');
     }
-    return Point((sumX / grain.length).round(), (sumY / grain.length).round());
   }
 
-  /// 重心からの距離を計算
-  double _calculateDistanceFromCenter(Point point, Point center) {
-    return math.sqrt(math.pow(point.x - center.x, 2) + math.pow(point.y - center.y, 2));
-  }
-
-  /// 分類画像を保存（グループ別色分け）
-  Future<void> _saveClassificationImage(img.Image originalImage, Map<String, List<List<Point>>> grainGroups, 
-                                       List<img.Color> groupColors, String originalPath) async {
+  /// 分類画像を元画像サイズに拡大して保存（グループ別色分け）
+  Future<void> _saveClassificationImageResized(img.Image originalImage, Map<String, List<List<Point>>> grainGroups, 
+                                             List<img.Color> groupColors, String originalPath, int targetWidth, int targetHeight) async {
     try {
       final classificationImage = img.Image.from(originalImage);
       
@@ -519,6 +556,9 @@ class ImageProcessorService {
         }
       }
       
+      // 元画像サイズに拡大
+      final resizedClassificationImage = img.copyResize(classificationImage, width: targetWidth, height: targetHeight);
+      
       final directory = await getApplicationDocumentsDirectory();
       final debugDir = Directory('${directory.path}/debug_images');
       if (!await debugDir.exists()) {
@@ -528,43 +568,41 @@ class ImageProcessorService {
       final fileName = 'classification_${DateTime.now().millisecondsSinceEpoch}.png';
       final classificationPath = '${debugDir.path}/$fileName';
       
-      final pngBytes = img.encodePng(classificationImage);
+      final pngBytes = img.encodePng(resizedClassificationImage);
       await File(classificationPath).writeAsBytes(pngBytes);
       
-      print('分類画像を保存: $classificationPath');
+      print('分類画像を保存 (${targetWidth}x${targetHeight}): $classificationPath');
     } catch (e) {
       print('分類画像保存エラー: $e');
     }
   }
 
-  /// エッジ強度を計算（8近傍との明度差）
-  double _calculateEdgeStrength(img.Image image, Point point) {
-    final centerPixel = image.getPixel(point.x, point.y);
-    final centerBrightness = (0.299 * centerPixel.r + 0.587 * centerPixel.g + 0.114 * centerPixel.b);
+  /// 米粒ピクセルかどうかを判定
+  bool _isRicePixel(int r, int g, int b) {
+    // 米粒は通常、白〜黄色系
+    // 極端に青い、赤い、緑いピクセルは背景として除外
+    final maxChannel = math.max(r, math.max(g, b));
+    final minChannel = math.min(r, math.min(g, b));
+    final saturation = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
     
-    var maxDiff = 0.0;
-    
-    // 8近傍をチェック
-    for (int dy = -1; dy <= 1; dy++) {
-      for (int dx = -1; dx <= 1; dx++) {
-        if (dx == 0 && dy == 0) continue;
-        
-        final nx = point.x + dx;
-        final ny = point.y + dy;
-        
-        if (nx >= 0 && ny >= 0 && nx < image.width && ny < image.height) {
-          final neighborPixel = image.getPixel(nx, ny);
-          final neighborBrightness = (0.299 * neighborPixel.r + 0.587 * neighborPixel.g + 0.114 * neighborPixel.b);
-          final diff = (centerBrightness - neighborBrightness).abs();
-          
-          if (diff > maxDiff) {
-            maxDiff = diff;
-          }
-        }
-      }
+    // 彩度が低く（白っぽい）、ある程度明るいピクセルを米粒と判定
+    return saturation < 0.3 && maxChannel > 100;
+  }
+
+  /// 重心を計算
+  Point _calculateCentroid(List<Point> grain) {
+    var sumX = 0.0;
+    var sumY = 0.0;
+    for (final point in grain) {
+      sumX += point.x;
+      sumY += point.y;
     }
-    
-    return maxDiff;
+    return Point((sumX / grain.length).round(), (sumY / grain.length).round());
+  }
+
+  /// 重心からの距離を計算
+  double _calculateDistanceFromCenter(Point point, Point center) {
+    return math.sqrt(math.pow(point.x - center.x, 2) + math.pow(point.y - center.y, 2));
   }
 
   /// 重心からの最大距離を計算
@@ -581,39 +619,6 @@ class ImageProcessorService {
     }
     
     return maxDistance;
-  }
-
-  /// 米粒ピクセルかどうかを判定
-  bool _isRicePixel(int r, int g, int b) {
-    // 米粒は通常、白〜黄色系
-    // 極端に青い、赤い、緑いピクセルは背景として除外
-    final maxChannel = math.max(r, math.max(g, b));
-    final minChannel = math.min(r, math.min(g, b));
-    final saturation = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
-    
-    // 彩度が低く（白っぽい）、ある程度明るいピクセルを米粒と判定
-    return saturation < 0.3 && maxChannel > 100;
-  }
-
-  /// デバッグ画像を保存
-  Future<void> _saveDebugImage(img.Image debugImage, String originalPath) async {
-    try {
-      final directory = await getApplicationDocumentsDirectory();
-      final debugDir = Directory('${directory.path}/debug_images');
-      if (!await debugDir.exists()) {
-        await debugDir.create(recursive: true);
-      }
-      
-      final fileName = 'debug_${DateTime.now().millisecondsSinceEpoch}.png';
-      final debugPath = '${debugDir.path}/$fileName';
-      
-      final pngBytes = img.encodePng(debugImage);
-      await File(debugPath).writeAsBytes(pngBytes);
-      
-      print('デバッグ画像を保存: $debugPath');
-    } catch (e) {
-      print('デバッグ画像保存エラー: $e');
-    }
   }
 
   /// 吸水率計算
