@@ -41,6 +41,7 @@ class DatabaseService {
         avgBrightness REAL NOT NULL,
         brightnessStd REAL NOT NULL,
         whiteAreaRatio REAL NOT NULL,
+        overallAvgBrightness REAL NOT NULL DEFAULT 0.0,
         riceVariety TEXT,
         polishingRatio INTEGER,
         notes TEXT,

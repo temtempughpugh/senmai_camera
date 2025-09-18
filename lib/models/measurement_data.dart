@@ -43,6 +43,7 @@ class MeasurementData extends Equatable {
       'avgBrightness': analysisResult.avgBrightness,
       'brightnessStd': analysisResult.brightnessStd,
       'whiteAreaRatio': analysisResult.whiteAreaRatio,
+      'overallAvgBrightness': analysisResult.overallAvgBrightness,
       'riceVariety': riceVariety?.name,
       'polishingRatio': analysisResult.polishingRatio,
       'notes': notes,
@@ -60,6 +61,7 @@ class MeasurementData extends Equatable {
       avgBrightness: map['avgBrightness'],
       brightnessStd: map['brightnessStd'],
       whiteAreaRatio: map['whiteAreaRatio'],
+      overallAvgBrightness: map['overallAvgBrightness'] ?? 0.0,
       polishingRatio: map['polishingRatio'],
       timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
     );

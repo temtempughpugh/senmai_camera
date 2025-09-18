@@ -51,6 +51,7 @@ class ImageProcessorService {
         avgBrightness: analysisData['avgBrightness'],
         brightnessStd: analysisData['brightnessStd'],
         whiteAreaRatio: analysisData['whiteAreaRatio'],
+        overallAvgBrightness: analysisData['overallAvgBrightness'], // 追加
         timestamp: DateTime.now(),
       );
     } catch (e) {
@@ -79,6 +80,10 @@ class ImageProcessorService {
     var ricePixelCount = 0;
     final brightnessList = <double>[];
     
+    // 背景削除後の全体明度計算用
+    var overallTotalBrightness = 0.0;
+    var overallPixelCount = 0;
+    
     // Step 1: ガイド範囲内での背景削除 & 米粒エリアの特定
     final ricePixels = <Point>[];
     for (int y = 0; y < height; y++) {
@@ -105,11 +110,15 @@ class ImageProcessorService {
         final brightness = (0.299 * r + 0.587 * g + 0.114 * b);
         
         // 米粒判定（背景を除外）
-        if (brightness > 80 && _isRicePixel(r, g, b)) {
+        if (brightness > 60 && _isRicePixel(r, g, b)) {
           ricePixelCount++;
           totalBrightness += brightness;
           brightnessList.add(brightness);
           ricePixels.add(Point(x, y));
+          
+          // 背景削除後の全体明度計算に追加
+          overallTotalBrightness += brightness;
+          overallPixelCount++;
         } else {
           // 背景を緑でマーク
           debugImage.setPixel(x, y, img.ColorRgb8(0, 100, 0));
@@ -162,6 +171,27 @@ class ImageProcessorService {
     print('暗い米: ${grainGroups['dark']?.length ?? 0}個');
     print('最暗い米: ${grainGroups['darkest']?.length ?? 0}個');
     
+    // 黒グループを除いた平均明度を先に計算
+    var brightnessExcludingBlack = 0.0;
+    var pixelCountExcludingBlack = 0;
+    final excludeGroupNames = ['brightest', 'bright', 'medium', 'dark']; // 黒グループ除外
+    
+    for (final groupName in excludeGroupNames) {
+      final grains = grainGroups[groupName] ?? [];
+      for (final grain in grains) {
+        for (final point in grain) {
+          final pixel = image.getPixel(point.x, point.y);
+          final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+          brightnessExcludingBlack += brightness;
+          pixelCountExcludingBlack++;
+        }
+      }
+    }
+    
+    final avgBrightnessExcludingBlack = pixelCountExcludingBlack > 0 
+        ? brightnessExcludingBlack / pixelCountExcludingBlack 
+        : 0.0;
+    
     // Step 6: 全グループで解析（黒も含む）
     var totalAbsorptionPixels = 0;
     var totalGrainPixels = 0;
@@ -176,6 +206,17 @@ class ImageProcessorService {
       img.ColorRgb8(0, 0, 0),       // 最暗い=黒
     ];
     
+    print('=== 明度による判定基準選択 ===');
+    print('黒グループ除外平均明度: ${avgBrightnessExcludingBlack.toStringAsFixed(1)}');
+    
+    // 明度に基づく判定基準の選択
+    bool useHighBrightnessThreshold = avgBrightnessExcludingBlack >= 215.0;
+    if (useHighBrightnessThreshold) {
+      print('高明度判定モード: 最暗い=80%基準、その他=90%基準');
+    } else {
+      print('通常判定モード: 最暗い=45%基準、その他=80%基準');
+    }
+    
     for (int groupIndex = 0; groupIndex < analysisGroupNames.length; groupIndex++) {
       final groupName = analysisGroupNames[groupIndex];
       final grains = grainGroups[groupName] ?? [];
@@ -189,11 +230,19 @@ class ImageProcessorService {
         List<Map<String, dynamic>> pixelResults;
         
         if (groupName == 'darkest') {
-          // 黒グループは45%基準
-          pixelResults = _analyzeGrainBlackGroup(image, grain);
+          // 黒グループの判定基準
+          if (useHighBrightnessThreshold) {
+            pixelResults = _analyzeGrainHighBrightnessBlackGroup(image, grain); // 80%基準
+          } else {
+            pixelResults = _analyzeGrainBlackGroup(image, grain); // 45%基準
+          }
         } else {
-          // その他のグループは80%基準
-          pixelResults = _analyzeGrainUniform(image, grain);
+          // その他のグループの判定基準
+          if (useHighBrightnessThreshold) {
+            pixelResults = _analyzeGrainHighBrightnessUniform(image, grain); // 90%基準
+          } else {
+            pixelResults = _analyzeGrainUniform(image, grain); // 80%基準
+          }
         }
         
         // ピクセルごとに色分け
@@ -230,25 +279,33 @@ class ImageProcessorService {
     await _saveClassificationImage(image, grainGroups, groupColors, grainCenters, originalPath, centerX, centerY, guideRadius);
     
     // 統計計算
-    final avgBrightness = ricePixelCount > 0 ? totalBrightness / ricePixelCount : 0.0;
-    final brightnessStd = _calculateStandardDeviation(brightnessList, avgBrightness);
+    final avgBrightness = avgBrightnessExcludingBlack; // 黒グループを除いた平均明度を使用
+    final brightnessStd = _calculateStandardDeviation(brightnessList, totalBrightness / ricePixelCount); // 全体の標準偏差
     final whiteAreaRatio = totalGrainPixels > 0 ? (totalAbsorptionPixels / totalGrainPixels) * 100 : 0.0;
+    
+    // 背景削除後の全体平均明度を計算
+    final overallAvgBrightness = overallPixelCount > 0 ? overallTotalBrightness / overallPixelCount : 0.0;
     
     print('=== 最終結果（ガイド範囲内） ===');
     print('総吸水ピクセル数: $totalAbsorptionPixels');
     print('総米粒ピクセル数: $totalGrainPixels');
     print('白濁面積率: ${whiteAreaRatio.toStringAsFixed(1)}%');
+    print('背景削除後全体平均明度: ${overallAvgBrightness.toStringAsFixed(1)}');
+    print('黒グループ除外平均明度: ${avgBrightness.toStringAsFixed(1)}'); // 追加
     
     return {
       'ricePixels': ricePixelCount,
       'avgBrightness': avgBrightness,
       'brightnessStd': brightnessStd,
       'whiteAreaRatio': whiteAreaRatio,
+      'overallAvgBrightness': overallAvgBrightness, // 追加
       'grainCount': individualGrains.length,
       'medianBrightness': medianBrightness,
     };
   }
 
+  // 以下の既存メソッドはそのまま維持（長いため省略）
+  
   /// ガイド境界線を描画
   void _drawGuideBoundary(img.Image debugImage, double centerX, double centerY, double radius) {
     final width = debugImage.width;
@@ -545,7 +602,88 @@ class ImageProcessorService {
     return groups;
   }
 
-  /// 一律判定による米粒解析（明度差のみで判断）
+  /// 高明度時の一般グループ解析（90%基準）
+  List<Map<String, dynamic>> _analyzeGrainHighBrightnessUniform(img.Image image, List<Point> grain) {
+    final results = <Map<String, dynamic>>[];
+    
+    // 米粒内の明度分布を取得
+    final brightnesses = grain.map((p) {
+      final pixel = image.getPixel(p.x, p.y);
+      return (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+    }).toList()..sort();
+    
+    if (brightnesses.isEmpty) return results;
+    
+    // 統計値計算（90%基準）
+    final top90Threshold = brightnesses[(brightnesses.length * 0.1).round()]; // 上位90%
+    final maxBrightness = brightnesses.last;
+    final minBrightness = brightnesses.first;
+    final range = maxBrightness - minBrightness;
+    
+    // 各ピクセルを解析（90%基準）
+    for (final point in grain) {
+      final pixel = image.getPixel(point.x, point.y);
+      final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+      
+      bool isAbsorbed = false;
+      
+      // 明度差による判定（90%基準）
+      if (range > 55) {
+        // 明度差がある場合：上位90%を吸水と判定
+        isAbsorbed = brightness >= top90Threshold;
+      } else if (range <= 55) {
+        // 明度が均一な場合：全部吸水
+        isAbsorbed = true;
+      } else {
+        // 中間の場合：上位90%基準を使用
+        isAbsorbed = brightness >= top90Threshold;
+      }
+      
+      results.add({'point': point, 'isAbsorbed': isAbsorbed});
+    }
+    
+    return results;
+  }
+
+  /// 高明度時の黒グループ解析（80%基準）
+  List<Map<String, dynamic>> _analyzeGrainHighBrightnessBlackGroup(img.Image image, List<Point> grain) {
+    final results = <Map<String, dynamic>>[];
+    
+    // 米粒内の明度分布を取得
+    final brightnesses = grain.map((p) {
+      final pixel = image.getPixel(p.x, p.y);
+      return (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+    }).toList()..sort();
+    
+    if (brightnesses.isEmpty) return results;
+    
+    // 統計値計算（80%基準）
+    final top80Threshold = brightnesses[(brightnesses.length * 0.2).round()]; // 上位80%
+    final maxBrightness = brightnesses.last;
+    final minBrightness = brightnesses.first;
+    final range = maxBrightness - minBrightness;
+    
+    // 各ピクセルを解析（80%基準）
+    for (final point in grain) {
+      final pixel = image.getPixel(point.x, point.y);
+      final brightness = (0.299 * pixel.r + 0.587 * pixel.g + 0.114 * pixel.b);
+      
+      bool isAbsorbed = false;
+      
+      // 明度差による判定（80%基準）
+      if (range <= 55) {
+        // 明度差が55以下の場合：全部吸水
+        isAbsorbed = true;
+      } else {
+        // 明度差がある場合：上位80%を吸水と判定
+        isAbsorbed = brightness >= top80Threshold;
+      }
+      
+      results.add({'point': point, 'isAbsorbed': isAbsorbed});
+    }
+    
+    return results;
+  }
   List<Map<String, dynamic>> _analyzeGrainUniform(img.Image image, List<Point> grain) {
     final results = <Map<String, dynamic>>[];
     

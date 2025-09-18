@@ -230,6 +230,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                   ),
                   SizedBox(height: 12),
+                  _buildDataRow('平均明度', result.avgBrightness.toStringAsFixed(1)),
                   _buildDataRow('米粒領域面積', '${result.areaPixels} ピクセル'),
                   _buildDataRow('平均明度', result.avgBrightness.toStringAsFixed(1)),
                   _buildDataRow('明度標準偏差', result.brightnessStd.toStringAsFixed(1)),

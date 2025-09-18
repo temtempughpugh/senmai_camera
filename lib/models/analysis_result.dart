@@ -8,6 +8,7 @@ class AnalysisResult extends Equatable {
   final double avgBrightness;
   final double brightnessStd;
   final double whiteAreaRatio;
+  final double overallAvgBrightness; // 背景削除後の全体平均明度
   final String? riceVariety;
   final int? polishingRatio;
   final DateTime timestamp;
@@ -20,6 +21,7 @@ class AnalysisResult extends Equatable {
     required this.avgBrightness,
     required this.brightnessStd,
     required this.whiteAreaRatio,
+    required this.overallAvgBrightness,
     this.riceVariety,
     this.polishingRatio,
     required this.timestamp,
@@ -33,6 +35,7 @@ class AnalysisResult extends Equatable {
     double? avgBrightness,
     double? brightnessStd,
     double? whiteAreaRatio,
+    double? overallAvgBrightness,
     String? riceVariety,
     int? polishingRatio,
     DateTime? timestamp,
@@ -45,6 +48,7 @@ class AnalysisResult extends Equatable {
       avgBrightness: avgBrightness ?? this.avgBrightness,
       brightnessStd: brightnessStd ?? this.brightnessStd,
       whiteAreaRatio: whiteAreaRatio ?? this.whiteAreaRatio,
+      overallAvgBrightness: overallAvgBrightness ?? this.overallAvgBrightness,
       riceVariety: riceVariety ?? this.riceVariety,
       polishingRatio: polishingRatio ?? this.polishingRatio,
       timestamp: timestamp ?? this.timestamp,
@@ -60,6 +64,7 @@ class AnalysisResult extends Equatable {
       'avgBrightness': avgBrightness,
       'brightnessStd': brightnessStd,
       'whiteAreaRatio': whiteAreaRatio,
+      'overallAvgBrightness': overallAvgBrightness,
       'riceVariety': riceVariety,
       'polishingRatio': polishingRatio,
       'timestamp': timestamp.millisecondsSinceEpoch,
@@ -75,6 +80,7 @@ class AnalysisResult extends Equatable {
       avgBrightness: map['avgBrightness'],
       brightnessStd: map['brightnessStd'],
       whiteAreaRatio: map['whiteAreaRatio'],
+      overallAvgBrightness: map['overallAvgBrightness'] ?? 0.0,
       riceVariety: map['riceVariety'],
       polishingRatio: map['polishingRatio'],
       timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
@@ -90,6 +96,7 @@ class AnalysisResult extends Equatable {
     avgBrightness,
     brightnessStd,
     whiteAreaRatio,
+    overallAvgBrightness,
     riceVariety,
     polishingRatio,
     timestamp,

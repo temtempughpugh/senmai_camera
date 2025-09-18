@@ -18,8 +18,13 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   double _circleRadius = 250.0;  // デフォルトサイズを250pxに変更
   Offset _circleCenter = Offset(0, 0); // 画面中央からの相対位置
   
+  // 背景判定の厳しさ（デフォルト80）
+  double _backgroundThreshold = 80.0;
+  bool _showBackgroundPreview = false;
+  
   // 画像情報
   img.Image? _originalImage;
+  img.Image? _previewImage; // 背景認識プレビュー用
   Size? _imageDisplaySize;
   Offset? _imageDisplayOffset;
   
@@ -36,7 +41,68 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     
     if (_originalImage != null) {
       print('元画像サイズ: ${_originalImage!.width}x${_originalImage!.height}');
+      _updateBackgroundPreview();
     }
+  }
+  
+  // 背景認識プレビューを更新
+  void _updateBackgroundPreview() {
+    if (_originalImage == null) return;
+    
+    setState(() {
+      _previewImage = _createBackgroundPreview(_originalImage!, _backgroundThreshold);
+    });
+  }
+  
+  // 背景認識プレビュー画像を作成
+  img.Image _createBackgroundPreview(img.Image originalImage, double threshold) {
+    final previewImage = img.Image.from(originalImage);
+    final width = originalImage.width;
+    final height = originalImage.height;
+    final centerX = width / 2;
+    final centerY = height / 2;
+    final guideRadius = math.min(width, height) / 2.0;
+    
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        // ガイド範囲内かチェック
+        final distanceFromCenter = math.sqrt(
+          math.pow(x - centerX, 2) + math.pow(y - centerY, 2)
+        );
+        
+        if (distanceFromCenter > guideRadius) {
+          // ガイド範囲外はグレー
+          previewImage.setPixel(x, y, img.ColorRgb8(100, 100, 100));
+          continue;
+        }
+        
+        final pixel = originalImage.getPixel(x, y);
+        final r = pixel.r.round();
+        final g = pixel.g.round();
+        final b = pixel.b.round();
+        final brightness = (0.299 * r + 0.587 * g + 0.114 * b);
+        
+        // 背景判定
+        if (brightness > threshold && _isRicePixel(r, g, b)) {
+          // 米粒として認識 → 元の色を保持
+          previewImage.setPixel(x, y, pixel);
+        } else {
+          // 背景として認識 → 赤く表示
+          previewImage.setPixel(x, y, img.ColorRgb8(255, 100, 100));
+        }
+      }
+    }
+    
+    return previewImage;
+  }
+  
+  // 米粒ピクセル判定（既存のロジック）
+  bool _isRicePixel(int r, int g, int b) {
+    final maxChannel = math.max(r, math.max(g, b));
+    final minChannel = math.min(r, math.min(g, b));
+    final saturation = maxChannel > 0 ? (maxChannel - minChannel) / maxChannel : 0;
+    
+    return saturation < 0.3 && maxChannel > 100;
   }
 
   @override
@@ -51,6 +117,15 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: Icon(_showBackgroundPreview ? Icons.visibility_off : Icons.visibility),
+            onPressed: () {
+              setState(() {
+                _showBackgroundPreview = !_showBackgroundPreview;
+              });
+            },
+            tooltip: _showBackgroundPreview ? '背景プレビューを非表示' : '背景プレビューを表示',
+          ),
           TextButton(
             onPressed: _resetCircle,
             child: Text('リセット', style: TextStyle(color: Colors.white)),
@@ -61,124 +136,152 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          // 画像表示情報を計算
-          _calculateImageDisplayInfo(constraints);
-          
-          return Stack(
-            children: [
-              // 背景画像
-              Positioned.fill(
-                child: Image.file(
-                  File(widget.imagePath),
-                  fit: BoxFit.contain,
-                ),
-              ),
-              
-              // 調整可能な円形ガイド
-              Positioned.fill(
-                child: GestureDetector(
-                  onScaleStart: (details) {},
-                  onScaleUpdate: (details) {
-                    setState(() {
-                      // 移動処理
-                      _circleCenter = Offset(
-                        _circleCenter.dx + details.focalPointDelta.dx,
-                        _circleCenter.dy + details.focalPointDelta.dy,
-                      );
-                      
-                      // 拡大縮小処理（感度を下げる）
-                      if (details.scale != 1.0) {
-                        final scaleDelta = (details.scale - 1.0) * 20; // 50→20に変更
-                        _circleRadius = (_circleRadius + scaleDelta).clamp(100.0, 400.0); // 範囲を100-400に変更
-                      }
-                    });
-                  },
-                  child: CustomPaint(
-                    painter: CircleGuidePainter(
-                      center: Offset(
-                        constraints.maxWidth / 2 + _circleCenter.dx,
-                        constraints.maxHeight / 2 + _circleCenter.dy,
-                      ),
-                      radius: _circleRadius,
-                    ),
-                  ),
-                ),
-              ),
-              
-              // サイズ調整ボタン
-              Positioned(
-                right: 20,
-                top: 100,
-                child: Column(
+      body: Column(
+        children: [
+          // 背景判定スライダー
+          Container(
+            padding: EdgeInsets.all(16),
+            color: Colors.grey[100],
+            child: Column(
+              children: [
+                Row(
                   children: [
-                    FloatingActionButton(
-                      mini: true,
-                      onPressed: () {
-                        setState(() {
-                          _circleRadius = (_circleRadius + 30).clamp(100.0, 400.0); // 20→30に変更
-                        });
-                      },
-                      child: Icon(Icons.add),
-                      backgroundColor: Colors.blue[800],
-                      foregroundColor: Colors.white,
-                    ),
-                    SizedBox(height: 8),
-                    Container(
-                      padding: EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        '${_circleRadius.round()}',
-                        style: TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    FloatingActionButton(
-                      mini: true,
-                      onPressed: () {
-                        setState(() {
-                          _circleRadius = (_circleRadius - 30).clamp(100.0, 400.0); // 20→30に変更
-                        });
-                      },
-                      child: Icon(Icons.remove),
-                      backgroundColor: Colors.blue[800],
-                      foregroundColor: Colors.white,
-                    ),
+                    Text('背景判定の厳しさ: ', style: TextStyle(fontSize: 14)),
+                    Text('${_backgroundThreshold.round()}', 
+                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   ],
                 ),
-              ),
-              
-              // デバッグ情報表示
-              if (_imageDisplaySize != null && _imageDisplayOffset != null)
-                Positioned(
-                  left: 20,
-                  top: 100,
-                  child: Container(
-                    padding: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('表示: ${_imageDisplaySize!.width.round()}x${_imageDisplaySize!.height.round()}',
-                             style: TextStyle(color: Colors.white, fontSize: 10)),
-                        Text('位置: (${_imageDisplayOffset!.dx.round()}, ${_imageDisplayOffset!.dy.round()})',
-                             style: TextStyle(color: Colors.white, fontSize: 10)),
-                        Text('ガイド: (${_circleCenter.dx.round()}, ${_circleCenter.dy.round()})',
-                             style: TextStyle(color: Colors.white, fontSize: 10)),
-                      ],
-                    ),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3.0,
+                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8.0),
+                  ),
+                  child: Slider(
+                    value: _backgroundThreshold,
+                    min: 40.0,
+                    max: 120.0,
+                    divisions: 80,
+                    onChanged: (value) {
+                      setState(() {
+                        _backgroundThreshold = value;
+                      });
+                      _updateBackgroundPreview();
+                    },
                   ),
                 ),
-            ],
-          );
-        },
+                Text(
+                  _showBackgroundPreview 
+                    ? '赤色 = 背景として認識'
+                    : 'プレビューボタンで背景認識を確認',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+          
+          // 画像表示エリア
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // 画像表示情報を計算
+                _calculateImageDisplayInfo(constraints);
+                
+                return Stack(
+                  children: [
+                    // 背景画像（プレビューまたは元画像）
+                    Positioned.fill(
+                      child: _showBackgroundPreview && _previewImage != null
+                          ? Image.memory(
+                              img.encodePng(_previewImage!),
+                              fit: BoxFit.contain,
+                            )
+                          : Image.file(
+                              File(widget.imagePath),
+                              fit: BoxFit.contain,
+                            ),
+                    ),
+                    
+                    // 調整可能な円形ガイド
+                    Positioned.fill(
+                      child: GestureDetector(
+                        onScaleStart: (details) {},
+                        onScaleUpdate: (details) {
+                          setState(() {
+                            // 移動処理
+                            _circleCenter = Offset(
+                              _circleCenter.dx + details.focalPointDelta.dx,
+                              _circleCenter.dy + details.focalPointDelta.dy,
+                            );
+                            
+                            // 拡大縮小処理（感度を下げる）
+                            if (details.scale != 1.0) {
+                              final scaleDelta = (details.scale - 1.0) * 20; // 50→20に変更
+                              _circleRadius = (_circleRadius + scaleDelta).clamp(100.0, 400.0); // 範囲を100-400に変更
+                            }
+                          });
+                        },
+                        child: CustomPaint(
+                          painter: CircleGuidePainter(
+                            center: Offset(
+                              constraints.maxWidth / 2 + _circleCenter.dx,
+                              constraints.maxHeight / 2 + _circleCenter.dy,
+                            ),
+                            radius: _circleRadius,
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    // サイズ調整ボタン
+                    Positioned(
+                      right: 20,
+                      top: 20,
+                      child: Column(
+                        children: [
+                          FloatingActionButton(
+                            mini: true,
+                            onPressed: () {
+                              setState(() {
+                                _circleRadius = (_circleRadius + 30).clamp(100.0, 400.0); // 20→30に変更
+                              });
+                            },
+                            child: Icon(Icons.add),
+                            backgroundColor: Colors.blue[800],
+                            foregroundColor: Colors.white,
+                          ),
+                          SizedBox(height: 8),
+                          Container(
+                            padding: EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${_circleRadius.round()}',
+                              style: TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          FloatingActionButton(
+                            mini: true,
+                            onPressed: () {
+                              setState(() {
+                                _circleRadius = (_circleRadius - 30).clamp(100.0, 400.0); // 20→30に変更
+                              });
+                            },
+                            child: Icon(Icons.remove),
+                            backgroundColor: Colors.blue[800],
+                            foregroundColor: Colors.white,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -220,12 +323,17 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
     }
     
     try {
-      print('=== 直接切り取り開始 ===');
+      print('=== 背景判定設定込みで切り取り開始 ===');
+      print('背景判定閾値: ${_backgroundThreshold}');
       
       // 画面表示座標系 → 元画像座標系の変換
       final croppedImagePath = await _cropFromOriginalImage();
       
-      Navigator.pop(context, croppedImagePath);
+      // 背景判定設定も一緒に渡す
+      Navigator.pop(context, {
+        'imagePath': croppedImagePath,
+        'backgroundThreshold': _backgroundThreshold,
+      });
       
     } catch (e) {
       print('切り取りエラー: $e');
@@ -235,7 +343,7 @@ class _ImageCropScreenState extends State<ImageCropScreen> {
   
   Future<String> _cropFromOriginalImage() async {
     final screenSize = MediaQuery.of(context).size;
-    final appBarHeight = AppBar().preferredSize.height + MediaQuery.of(context).padding.top;
+    final appBarHeight = AppBar().preferredSize.height + MediaQuery.of(context).padding.top + 80; // スライダー分も考慮
     final availableHeight = screenSize.height - appBarHeight;
     
     // 画面表示座標系でのガイド位置
